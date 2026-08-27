@@ -8,7 +8,7 @@ components:
   agk_tui:
     role: RMUX session mapping and terminal control surface
     repository: agentik-os/AGK-TUI
-    commit: 651c21f99cd0c4880b786e8d7fef1956b21d3ff9
+    commit: c757ef894aa04355bd7f350bc1d45af4c5c32d9a
   hermes:
     role: agent runtime, profiles, tools, memory, gateways and providers
     repository: NousResearch/hermes-agent
