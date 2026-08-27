@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_station_manifest_pins_upstreams_and_product_boundary():
     manifest = yaml.safe_load((ROOT / "station.yaml").read_text())
     assert manifest["product"]["id"] == "station"
-    assert manifest["product"]["version"] == "0.3.3"
+    assert manifest["product"]["version"] == "0.4.0"
     assert manifest["components"]["hermes"]["commit"] == "f896b386d06a11c47784a5a5676c1be31945048e"
     for component in ("agk_tui", "hermes"):
         commit = manifest["components"][component]["commit"]
@@ -42,6 +42,7 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     safe_reload=(ROOT/"overlay/scripts/station_safe_gateway_reload.py").read_text()
     assert "write_drain_request" in safe_reload and "clear_drain_request" in safe_reload
     assert "active work did not drain; reload cancelled without interrupting it" in safe_reload
+    assert "'status':'not-running'" in safe_reload
     assert "RestartUnit" not in safe_reload and " restart " not in safe_reload
     assert "1541816910587625492,1541817649661747351,1541817976586637382,1541817162241540126,1541131574509314209" in shared
     broker=(ROOT/"overlay/scripts/station_interagent_broker.py").read_text()

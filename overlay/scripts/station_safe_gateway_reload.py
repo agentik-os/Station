@@ -14,11 +14,14 @@ def _drain_api():
 ALLOWED_USERS={'operator','agentik','mission','private'}
 UNIT=re.compile(r'^hermes-gateway(?:-[a-z0-9-]+)?\.service$')
 
+class StatusUnavailable(RuntimeError): pass
+
 def status(home:Path)->dict:
- try:
-  value=json.loads((home/'gateway_state.json').read_text(encoding='utf-8'))
-  return value if isinstance(value,dict) else {}
- except (OSError,ValueError,TypeError): return {}
+ try: value=json.loads((home/'gateway_state.json').read_text(encoding='utf-8'))
+ except (OSError,ValueError,TypeError) as exc: raise StatusUnavailable('gateway state unavailable') from exc
+ if not isinstance(value,dict) or not isinstance(value.get('active_agents'),int) or value['active_agents']<0:
+  raise StatusUnavailable('gateway active-agent count unavailable')
+ return value
 
 def user_call(user:str,uid:int,*argv:str,timeout:int=30)->subprocess.CompletedProcess:
  return subprocess.run(['/usr/bin/setpriv','--reuid',user,'--regid',user,'--clear-groups','/usr/bin/env',f'HOME=/home/{user}',f'HERMES_HOME={os.environ["TARGET_HERMES_HOME"]}',f'XDG_RUNTIME_DIR=/run/user/{uid}',f'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus',*argv],text=True,capture_output=True,timeout=timeout,check=False)
@@ -28,22 +31,36 @@ def main()->int:
  if args.user not in ALLOWED_USERS or not UNIT.fullmatch(args.unit): raise SystemExit('untrusted target')
  account=pwd.getpwnam(args.user); base=Path(account.pw_dir).resolve(); home=args.hermes_home.resolve()
  if home!=base/'.hermes' and base/'.hermes/profiles' not in home.parents: raise SystemExit('profile boundary violation')
- os.environ['TARGET_HERMES_HOME']=str(home); timeout=max(60,min(args.timeout,7200)); initial=status(home); old_pid=int(initial.get('pid') or 0)
+ os.environ['TARGET_HERMES_HOME']=str(home); timeout=max(60,min(args.timeout,7200))
+ probe=user_call(args.user,account.pw_uid,'/usr/bin/systemctl','--user','is-active',args.unit)
+ if probe.returncode:
+  print(json.dumps({'status':'not-running','user':args.user,'unit':args.unit,'active_agents_before':0,'old_pid':0,'new_pid':0}))
+  return 0
+ initial=status(home); old_pid=int(initial.get('pid') or 0)
  clear_drain_request,write_drain_request=_drain_api(); marker=home/'.drain_request.json'; marker_active=False
  write_drain_request(principal='station-safe-reload',suppress_notification=True,home=home); marker_active=True
  try: os.chown(marker,account.pw_uid,account.pw_gid)
  except OSError: pass
- deadline=time.monotonic()+timeout
+ deadline=time.monotonic()+timeout; refresh_at=time.monotonic()+300
  try:
   while time.monotonic()<deadline:
-   if int(status(home).get('active_agents') or 0)==0: break
+   current=status(home)
+   if current['active_agents']==0: break
+   if time.monotonic()>=refresh_at:
+    write_drain_request(principal='station-safe-reload',suppress_notification=True,home=home)
+    try: os.chown(marker,account.pw_uid,account.pw_gid)
+    except OSError: pass
+    refresh_at=time.monotonic()+300
    time.sleep(1)
   else: raise TimeoutError('active work did not drain; reload cancelled without interrupting it')
   result=user_call(args.user,account.pw_uid,'/usr/bin/systemctl','--user','reload',args.unit)
   if result.returncode: raise RuntimeError('in-band reload request failed')
-  boot_deadline=time.monotonic()+180
+  boot_deadline=time.monotonic()+180; current={}
   while time.monotonic()<boot_deadline:
-   current=status(home); new_pid=int(current.get('pid') or 0)
+   try: current=status(home)
+   except StatusUnavailable:
+    time.sleep(1); continue
+   new_pid=int(current.get('pid') or 0)
    if new_pid and new_pid!=old_pid and current.get('gateway_state') in {'running','draining'}: break
    time.sleep(1)
   else: raise TimeoutError('gateway did not return after in-band reload')

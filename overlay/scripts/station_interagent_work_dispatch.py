@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn Operator-bound inter-agent messages into durable Discord work threads."""
+"""Deliver Station peer handoffs through reusable Discord pair threads."""
 from __future__ import annotations
 
 import json
@@ -90,6 +90,15 @@ class WorkStore:
                 updated_at REAL NOT NULL
             )"""
         )
+        self.db.execute(
+            """CREATE TABLE IF NOT EXISTS routes(
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(source,target)
+            )"""
+        )
         self.db.commit()
         try:
             self.path.chmod(0o600)
@@ -107,6 +116,14 @@ class WorkStore:
         )
         self.db.commit()
         return self.get(record["id"]) or {}
+
+    def route(self, source: str, target: str) -> str | None:
+        row=self.db.execute("SELECT thread_id FROM routes WHERE source=? AND target=?",(source,target)).fetchone()
+        return str(row["thread_id"]) if row else None
+
+    def bind_route(self, source: str, target: str, thread_id: str) -> None:
+        self.db.execute("INSERT INTO routes(source,target,thread_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(source,target) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at",(source,target,thread_id,time.time()))
+        self.db.commit()
 
     def update(self, message_id: str, **values) -> dict:
         allowed = {"thread_id", "thread_message_id", "runtime_name", "runtime_id", "state"}
@@ -154,8 +171,12 @@ class DiscordClient:
         value = self._request(
             "POST",
             f"/channels/{int(parent_channel_id)}/threads",
-            {"name": name, "type": 11, "auto_archive_duration": 1440},
+            {"name": name, "type": 11, "auto_archive_duration": 60},
         )
+        return str(value["id"])
+
+    def reuse_thread(self, thread_id: str) -> str:
+        value=self._request("PATCH",f"/channels/{int(thread_id)}",{"archived":False,"locked":False,"auto_archive_duration":60})
         return str(value["id"])
 
     def post_handoff(self, thread_id: str, content: str, target_bot_id: str) -> str:
@@ -270,8 +291,13 @@ class Dispatcher:
             return state
         thread_id = state.get("thread_id")
         if not thread_id:
-            thread_id = self.discord.create_thread(self.parent_channel_id,thread_title(record["source"],record["body"]))
-            state = self.store.update(record["id"],thread_id=thread_id,state="thread-created")
+            pair_thread=self.store.route(record["source"],record["target"])
+            if pair_thread:
+                thread_id=self.discord.reuse_thread(pair_thread)
+            else:
+                thread_id = self.discord.create_thread(self.parent_channel_id,f"{record['source'].upper()} → {record['target'].upper()} · handoffs")
+                self.store.bind_route(record["source"],record["target"],thread_id)
+            state = self.store.update(record["id"],thread_id=thread_id,state="thread-reused" if pair_thread else "thread-created")
         thread_message_id = state.get("thread_message_id")
         if not thread_message_id:
             content="\n".join([
