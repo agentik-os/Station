@@ -40,6 +40,7 @@ case "$command" in
       private) user=private; unit=hermes-gateway.service; home=/home/private/.hermes ;;
       collective) user=mission; unit=hermes-gateway-collective.service; home=/home/mission/.hermes/profiles/collective ;;
       nutrition-os) user=operator; unit=hermes-gateway-nutrition-os.service; home=/home/operator/.hermes/profiles/nutrition-os ;;
+      dentistrygpt) user=mission; unit=hermes-gateway-clientdentistrygptee881c.service; home=/home/mission/.hermes/profiles/clientdentistrygptee881c ;;
       *) echo "unknown gateway target" >&2; exit 2 ;;
     esac
     exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/station_safe_gateway_reload.py --user "$user" --unit "$unit" --hermes-home "$home" "$@"
@@ -107,7 +108,7 @@ Station · portable Discord + Hermes + AGK-TUI + Portal platform
   sudo station discord token list
   sudo station discord token check TARGET
   sudo station discord token rotate TARGET
-  sudo station gateway safe-reload {operator|agentik|mission|private|collective|nutrition-os}
+  sudo station gateway safe-reload {operator|agentik|mission|private|collective|nutrition-os|dentistrygpt}
   station completion {archive-prompt|gate} ...
   station recovery audit
   sudo station recovery baseline
