@@ -204,6 +204,8 @@ install -m 0755 "$repo_root/scripts/build-agency-skill.py" \
   "$install_root/scripts/build-agency-skill.py"
 install -m 0755 "$repo_root/scripts/install-shared-hermes.sh" \
   "$install_root/scripts/install-shared-hermes.sh"
+install -m 0755 "$repo_root/scripts/configure-station-discord-interagent.py" \
+  "$install_root/scripts/configure-station-discord-interagent.py"
 install -m 0755 "$repo_root/scripts/topology.py" "$install_root/scripts/topology.py"
 install -m 0755 "$repo_root/scripts/composio_inventory.py" \
   "$install_root/scripts/composio_inventory.py"

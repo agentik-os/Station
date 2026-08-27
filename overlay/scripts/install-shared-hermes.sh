@@ -155,9 +155,21 @@ for user_name in "${users[@]}"; do
     AGK_TERMINAL_ROOT="$install_root" \
     PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin:$home_dir/.local/bin" \
     "$install_root/scripts/sync-hermes.sh"
+  python3 "$install_root/scripts/configure-station-discord-interagent.py" "$home_dir/.hermes/.env"
+  chown "$user_name:$(id -gn "$user_name")" "$home_dir/.hermes/.env"
 
   unit_dir=$home_dir/.config/systemd/user
   [ -d "$unit_dir" ] || continue
+  while IFS= read -r -d '' gateway_unit; do
+    gateway_name=$(basename "$gateway_unit")
+    dropin_dir="$unit_dir/$gateway_name.d"
+    install -d -m 0755 -o "$user_name" -g "$(id -gn "$user_name")" "$dropin_dir"
+    printf '%s\n' '[Service]' 'Environment=DISCORD_ALLOW_BOTS=mentions' 'Environment=DISCORD_BOTS_REQUIRE_INLINE_MENTION=true' \
+      'Environment=DISCORD_ALLOWED_USERS=1441423462492016821,1541816910587625492,1541817649661747351,1541817976586637382,1541817162241540126,1541131574509314209' \
+      > "$dropin_dir/30-station-interagent.conf"
+    chown "$user_name:$(id -gn "$user_name")" "$dropin_dir/30-station-interagent.conf"
+    chmod 0644 "$dropin_dir/30-station-interagent.conf"
+  done < <(find "$unit_dir" -maxdepth 1 -type f -name 'hermes-gateway*.service' -print0)
   while IFS= read -r -d '' unit; do
     cp -a "$unit" "$backup_dir/$user_name/$(basename "$unit").before"
     sed -i \
@@ -166,6 +178,13 @@ for user_name in "${users[@]}"; do
       "$unit"
     chown "$user_name:$(id -gn "$user_name")" "$unit"
   done < <(find "$unit_dir" -maxdepth 1 -type f -name 'hermes-*.service' -print0)
+done
+
+for profile_env in /home/*/.hermes/profiles/*/.env; do
+  [ -f "$profile_env" ] || continue
+  owner=$(stat -c %U "$profile_env")
+  python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
+  chown "$owner:$(id -gn "$owner")" "$profile_env"
 done
 
 for user_name in "${users[@]}"; do

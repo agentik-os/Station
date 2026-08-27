@@ -71,5 +71,9 @@ def interagent_prompt(_session_info: dict | None = None) -> str:
         "one another with the station_interagent tool. Operator is the global administrator. Send only "
         "explicit non-secret messages; the broker never grants access to another Linux user's files, "
         "memory or private state. Use send for handoffs/questions, inbox to read your own queue, and ack "
-        "after processing. Do not claim cross-Station communication is unavailable while this tool is ready."
+        "after processing. Every peer request MUST use this tool: never write a peer bot prompt as your own "
+        "assistant reply and never inject it into an agent's active/main session. The broker queues at most three "
+        "concurrent deliveries, creates a dedicated Discord thread, and sends a real source-bot message with an "
+        "inline target-bot mention; the target acknowledges and works only in that thread. Do not claim "
+        "cross-Station communication is unavailable while this tool is ready."
     )

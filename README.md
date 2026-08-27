@@ -119,6 +119,12 @@ sudo station recovery oracle-pass operator MISS-ID /home/operator/.hermes/report
 
 Discord exposes `/recap` on Operator to audit the current conversation against every archived prompt, requirement, artifact, evidence, Gauntlet and Completion Oracle gate. Its `Relaunch Missing` button creates an explicit owner authorization and reinjects the recovery instruction into the same Discord/Hermes session. `/station-recovery` remains the fleet recovery center with `Keep Backlog`, `Already Done`, `Ignore`, Refresh and Close. Viewing either report never authorizes execution. Human approvals are root-owned and bound to the exact requirement digest; Completion Oracle verdicts are root-owned and bound to the exact full-ledger digest, so later edits invalidate stale trust automatically.
 
+## Inter-agent Discord delivery
+
+Every Station peer request uses the UID-authenticated `station_interagent` broker. The broker persists first, runs at most three deliveries concurrently, creates a dedicated thread in the target bot's home channel, and posts a real source-bot message with an explicit target-bot mention. It never injects a peer prompt into an agent's active/main session and rejects self-directed bot prompts. The target bot must acknowledge in the same thread before the dispatch is considered accepted.
+
+All Station Discord replies are plain by default: full-message `>>>` blockquote backgrounds are removed. Any web URL that appears only inside inline/fenced code is repeated outside code as a clickable link.
+
 ## Lifecycle
 
 ```bash

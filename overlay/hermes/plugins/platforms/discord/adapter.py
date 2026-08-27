@@ -28,6 +28,7 @@ from collections import defaultdict
 from contextlib import suppress
 from typing import Callable, Dict, List, Optional, Any, Tuple
 from urllib.parse import quote, urljoin
+from .agk_message_format import normalize_station_reply
 
 from agent.async_utils import (
     consume_detached_task_result as _consume_background_task_result,
@@ -6068,7 +6069,7 @@ class DiscordAdapter(BasePlatformAdapter):
         """
         if not content:
             return content
-        return convert_table_to_bullets(content)
+        return convert_table_to_bullets(normalize_station_reply(content))
 
     async def _run_simple_slash(
         self,
