@@ -1,0 +1,14 @@
+# Station local secrets
+*.env
+.env
+secrets/
+backups/
+state/
+*.token
+*.key
+*.pem
+node_modules/
+dist/
+server-dist/
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,16 @@
+id: nutrition-specialist
+name: Nutrition Specialist
+version: 1.0.1
+description: Runs the Nutrition OS kitchen lifecycle through a dedicated isolated Hermes profile.
+scope:
+  - operator
+runtime: hermes
+profile: nutrition
+launcher: /home/operator/.local/bin/nutrition-hermes
+os:
+  - nutrition-os@1.0.1
+prompt: prompt.md
+distribution: agk-pilot
+aliases:
+  - nutrition-agent
+  - food-agent

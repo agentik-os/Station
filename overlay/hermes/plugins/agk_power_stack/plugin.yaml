@@ -1,0 +1,7 @@
+name: agk-power-stack
+version: 1.0.0
+description: "Pinned AGK capability routing for Superpowers, Caveman, Agency Agents and local voice."
+author: "Agentik OS"
+kind: standalone
+provides_tools:
+  - agency_specialist

@@ -1,0 +1,17 @@
+id: research-cycle
+version: 0.1.0
+stages:
+  - id: frame
+    output: decision-question
+  - id: discover
+    requires: [frame]
+    output: source-ledger
+  - id: validate
+    requires: [discover]
+    output: verified-evidence
+  - id: synthesize
+    requires: [validate]
+    output: cited-brief
+  - id: verify
+    requires: [synthesize]
+    output: evidence-verdict

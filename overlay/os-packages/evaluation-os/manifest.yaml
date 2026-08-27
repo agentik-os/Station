@@ -1,0 +1,17 @@
+schema_version: "1.0"
+id: evaluation-os
+name: Evaluation OS
+version: 0.1.0
+description: Independent quality system for acceptance evidence, regression testing, security review, and release verdicts.
+scope: [global, operator, agentik, mission, private, client, project, session]
+status: active
+license: AGK-internal
+dependencies: []
+capabilities: [acceptance testing, regression analysis, security review, evidence collection, release verdicts]
+skills: [evidence-evaluation]
+workflows: [evaluation-cycle]
+agents: [evidence-auditor, master-os-builder]
+tools: [terminal, browser, file, delegation, kanban]
+commands: [evaluate run, evaluate verdict]
+knowledge: [README.md]
+evals: [evals/cases.json]

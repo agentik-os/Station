@@ -1,0 +1,1 @@
+[{"id":"tdd","input":"Change behavior","expected":["failing test first","green implementation","regression suite"]},{"id":"delivery","input":"Declare complete","expected":["real runtime exercised","rollback path","independent review"]}]

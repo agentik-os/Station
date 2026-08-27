@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository=${STATION_REPOSITORY:-agentik-os/Station}
+ref=${STATION_REF:-main}
+dry_run=false
+bootstrap_args=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --ref) ref=${2:?missing ref}; shift 2 ;;
+    --dry-run) dry_run=true; bootstrap_args+=(--dry-run); shift ;;
+    --core-only) bootstrap_args+=(--core-only); shift ;;
+    -h|--help)
+      cat <<EOF
+Station installer
+usage: curl -fsSL https://raw.githubusercontent.com/$repository/main/install | sudo bash
+       install [--ref REF] [--dry-run] [--core-only]
+EOF
+      exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$repository" in */*) ;; *) echo "invalid repository" >&2; exit 2 ;; esac
+case "$ref" in *[!A-Za-z0-9._/-]*|"") echo "invalid ref" >&2; exit 2 ;; esac
+[ "$(uname -s)" = Linux ] || { echo "Station currently supports Linux VPS hosts" >&2; exit 1; }
+if [ "$dry_run" = false ] && [ "$(id -u)" -ne 0 ]; then
+  echo "Station installation requires root (use sudo)" >&2
+  exit 1
+fi
+for command_name in curl tar python3; do command -v "$command_name" >/dev/null || { echo "missing command: $command_name" >&2; exit 1; }; done
+
+temporary=$(mktemp -d -t station-install.XXXXXX)
+trap 'rm -rf -- "$temporary"' EXIT
+archive=$temporary/station.tar.gz
+url="https://codeload.github.com/$repository/tar.gz/$ref"
+curl --proto '=https' --tlsv1.2 --retry 4 --retry-all-errors -fsSL "$url" -o "$archive"
+python3 - "$archive" <<'PY'
+import sys, tarfile
+from pathlib import PurePosixPath
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    members = archive.getmembers()
+    if not members or len(members) > 20000:
+        raise SystemExit("unsafe archive member count")
+    for member in members:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
+            raise SystemExit("unsafe archive path")
+PY
+tar -xzf "$archive" -C "$temporary"
+source_dir=$(python3 - "$temporary" <<'PY'
+import pathlib, sys
+root=pathlib.Path(sys.argv[1])
+candidates=[p for p in root.iterdir() if p.is_dir() and (p/'station.yaml').is_file() and (p/'bootstrap-vps.sh').is_file()]
+if len(candidates)!=1: raise SystemExit('Station archive layout is invalid')
+print(candidates[0])
+PY
+)
+if [ "$dry_run" = true ]; then
+  echo "Station dry run from $repository@$ref"
+fi
+bash "$source_dir/bootstrap-vps.sh" "${bootstrap_args[@]}"

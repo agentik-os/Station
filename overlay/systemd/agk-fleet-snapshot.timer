@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AGK Fleet operational snapshot
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=15s
+AccuracySec=2s
+Persistent=true
+Unit=agk-fleet-snapshot.service
+
+[Install]
+WantedBy=timers.target

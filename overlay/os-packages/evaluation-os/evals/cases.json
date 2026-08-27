@@ -1,0 +1,1 @@
+[{"id":"runtime-proof","input":"Review a claimed fix","expected":["user-visible reproduction","exact evidence","no static-only approval"]},{"id":"security-gate","input":"Security finding remains","expected":["FAIL verdict","severity","rework routing"]}]

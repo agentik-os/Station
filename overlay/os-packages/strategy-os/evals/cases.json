@@ -1,0 +1,1 @@
+[{"id":"real-options","input":"Choose a strategy","expected":["distinct options","do-nothing option","trade-offs"]},{"id":"accountability","input":"Finalize decision","expected":["owner","metric","review date","stop condition"]}]

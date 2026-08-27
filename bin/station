@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=${STATION_ROOT:-/usr/local/lib/station}
+[ -d "$root" ] || root=/opt/station/current
+command=${1:-status}
+shift || true
+
+case "$command" in
+  doctor|status)
+    exec python3 "$root/scripts/doctor.py" "$@"
+    ;;
+  tui)
+    exec /usr/local/bin/agk "$@"
+    ;;
+  portal)
+    if [ -n "${STATION_PORTAL_URL:-}" ]; then
+      printf '%s\n' "$STATION_PORTAL_URL"
+    elif command -v tailscale >/dev/null 2>&1; then
+      tailscale status --json | python3 -c 'import json,sys; name=str((json.load(sys.stdin).get("Self") or {}).get("DNSName") or "").rstrip("."); print("https://"+name+"/" if name else "http://127.0.0.1:8459/")'
+    else
+      printf '%s\n' 'http://127.0.0.1:8459/'
+    fi
+    ;;
+  discord)
+    subcommand=${1:-}; shift || true
+    [ "$subcommand" = token ] || { echo "usage: sudo station discord token {list|check TARGET|rotate TARGET}" >&2; exit 2; }
+    [ "$(id -u)" -eq 0 ] || { echo "Discord token management requires sudo" >&2; exit 1; }
+    exec /usr/local/lib/agk-terminal/venv/bin/python \
+      /usr/local/lib/agk-terminal/scripts/rotate_discord_token.py "$@"
+    ;;
+  backup)
+    [ "$(id -u)" -eq 0 ] || { echo "Station backup requires sudo" >&2; exit 1; }
+    exec python3 "$root/scripts/backup.py" "$@"
+    ;;
+  update)
+    [ "$(id -u)" -eq 0 ] || { echo "Station update requires sudo" >&2; exit 1; }
+    exec bash "$root/scripts/update.sh" "$@"
+    ;;
+  rollback)
+    [ "$(id -u)" -eq 0 ] || { echo "Station rollback requires sudo" >&2; exit 1; }
+    exec bash "$root/scripts/rollback.sh" "$@"
+    ;;
+  version)
+    python3 -c "import yaml; print(yaml.safe_load(open('$root/station.yaml'))['product']['version'])"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Station · portable Discord + Hermes + AGK-TUI + Portal platform
+
+  station status|doctor
+  station tui
+  station portal
+  sudo station discord token list
+  sudo station discord token check TARGET
+  sudo station discord token rotate TARGET
+  sudo station backup
+  sudo station update [--ref REF]
+  sudo station rollback [RELEASE]
+  station version
+EOF
+    ;;
+  *) echo "unknown Station command: $command" >&2; exit 2 ;;
+esac

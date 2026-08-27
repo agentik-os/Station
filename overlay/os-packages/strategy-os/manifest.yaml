@@ -1,0 +1,17 @@
+schema_version: "1.0"
+id: strategy-os
+name: Strategy OS
+version: 0.1.0
+description: Decision system for framing options, challenging assumptions, prioritizing initiatives, and producing accountable strategy.
+scope: [global, operator, agentik, mission, private, client, project, session]
+status: active
+license: AGK-internal
+dependencies: [research-os@0.1.0]
+capabilities: [problem framing, option analysis, prioritization, risk mapping, decision records]
+skills: [decision-strategy]
+workflows: [strategy-cycle]
+agents: [product-strategy, personal-strategist, master-os-builder]
+tools: [web, todo, kanban]
+commands: [strategy frame, strategy decide]
+knowledge: [README.md]
+evals: [evals/cases.json]

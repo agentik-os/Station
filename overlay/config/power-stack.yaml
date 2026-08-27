@@ -1,0 +1,44 @@
+version: 1
+rules:
+  - id: proactive-capability-selection
+    title: Proactively select and use the strongest available capability
+    enabled: true
+    providers: ["*"]
+    content: >-
+      Before every non-trivial task, inspect the live skills, plugins, tools, MCPs, specialist
+      roster, and installed extensions that could improve correctness, speed, or quality. Load
+      and use the best matching capabilities without waiting for the owner to name them. Search
+      the Agency Agents roster and delegate a bounded specialist when domain expertise materially
+      helps. Combine capabilities only when their contracts are compatible; user instructions,
+      authorization, secrets, profile isolation, approvals, reversibility, and verification always
+      outrank extension defaults. Do not create uncontrolled loops or claim an agent was launched
+      unless its real runtime or delegated task is verified.
+extensions:
+  superpowers:
+    repository: obra/superpowers
+    commit: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+    license: MIT
+    mode: hermes-plugin
+  caveman:
+    repository: JuliusBrussee/caveman
+    commit: 81536f57b3303b7de7f5bc5b564cc344f9112d68
+    license: MIT-and-BSL-1.1
+    mode: hermes-native-skills
+    runtime_cli: "@caveman-ai/cli"
+    runtime_version: "1.2.5"
+    runtime_integrity: "sha512-ychvaRikZ8q80O1mfKfmlutXZN6MdBwFNE6mStZO00KJmj7HD9gmgAAwgi/t07gUa7p1G5a9pRlY9bmzNmL0+Q=="
+    proxy_enabled: true
+  agency-agents:
+    repository: msitarzewski/agency-agents
+    commit: 3c9588880b7cafaec325a104899fd8bbe27e7d72
+    license: MIT
+    mode: hermes-specialist-library
+voice:
+  stt_provider: local
+  stt_model: large-v3
+  language: auto
+  compute_device: cpu
+  compute_type: int8
+  vad: true
+  tts_provider: piper
+  tts_voice: fr_FR-siwis-medium

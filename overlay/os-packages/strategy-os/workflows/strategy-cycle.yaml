@@ -1,0 +1,17 @@
+id: strategy-cycle
+version: 0.1.0
+stages:
+  - id: frame
+    output: decision-contract
+  - id: options
+    requires: [frame]
+    output: option-set
+  - id: challenge
+    requires: [options]
+    output: risk-and-assumption-map
+  - id: decide
+    requires: [challenge]
+    output: decision-record
+  - id: commit
+    requires: [decide]
+    output: kanban-commitments

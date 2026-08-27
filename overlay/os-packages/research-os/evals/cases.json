@@ -1,0 +1,1 @@
+[{"id":"primary-source","input":"Make a current material claim","expected":["original source","date","inline citation"]},{"id":"contradiction","input":"Sources disagree","expected":["surface disagreement","uncertainty","no fabricated resolution"]}]

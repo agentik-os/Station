@@ -1,0 +1,17 @@
+id: evaluation-cycle
+version: 0.1.0
+stages:
+  - id: criteria
+    output: acceptance-matrix
+  - id: reproduce
+    requires: [criteria]
+    output: runtime-evidence
+  - id: challenge
+    requires: [reproduce]
+    output: negative-and-security-results
+  - id: verdict
+    requires: [challenge]
+    output: pass-fail-blocked-report
+  - id: route
+    requires: [verdict]
+    output: release-or-rework-kanban-state

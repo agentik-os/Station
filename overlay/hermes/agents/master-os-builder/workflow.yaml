@@ -1,0 +1,282 @@
+id: agk.complete-os-delivery
+version: 2.3.0
+name: Complete AGK Operative System Delivery
+owner_agent: master-os-builder
+purpose: Build, integrate, publish, verify, release, update, and roll back a complete Operative System across AGK, Hermes, and Discord.
+
+invariants:
+  - An OS is a versioned executable methodology, never only a prompt or skill.
+  - Historical/reference material is never installed directly.
+  - Operator is the administrative control plane; environment data remains isolated.
+  - Discord applications and privileged intents remain owner-controlled prerequisites.
+  - Secrets never enter prompts, packages, Discord posts, artifacts, or logs.
+  - Every mutation is idempotent, audited, recoverable, and verified by read-back.
+  - A channel is provisioned only for an installed or explicitly staged OS.
+  - No OS is complete until its end-to-end acceptance matrix passes.
+
+phases:
+  - id: discover
+    outputs:
+      - source-evidence.json
+      - domain-map.yaml
+      - capability-dedupe.yaml
+      - provenance-report.md
+    gates:
+      - sources classified as exact, reconstructed, candidate, or rejected
+      - existing OS, profile, agent, tools, Discord routes, and registry entries inventoried
+
+  - id: design
+    outputs:
+      - manifest.yaml
+      - architecture.yaml
+      - agent-team.yaml
+      - workflows/
+      - permissions.yaml
+      - discord-surface.yaml
+      - automation-policy.yaml
+      - lifecycle-contracts.yaml
+    gates:
+      - purpose, inputs, outputs, success criteria, failure paths, and autonomy defined
+      - Hermes-native capabilities reused instead of duplicated
+
+  - id: build
+    outputs:
+      - methodology/
+      - knowledge/
+      - agents/
+      - skills/
+      - tools/
+      - functions/
+      - commands/
+      - templates/
+      - evals/
+      - memory/
+      - policies/
+      - schemas/
+      - tests/
+      - examples/
+    gates:
+      - deterministic state changes implemented as functions/services
+      - unit, schema, workflow, safety, and package tests pass
+
+  - id: integrate
+    outputs:
+      - hermes-profile.yaml
+      - provider-routing.yaml
+      - mcp-composio-policy.yaml
+      - gateway-service.yaml
+      - agk-registry-entry.yaml
+      - discord-channel-entry.yaml
+    gates:
+      - profile, SOUL, skills, toolsets, MCP, providers, fallback, gateway, and scopes resolved
+      - one dedicated Discord channel under the configured OS category
+      - bot identity reused or owner-created and explicitly authorized
+
+  - id: publish
+    outputs:
+      - discord-definition-post.md
+      - discord-update-ledger.md
+      - build-report.md
+    gates:
+      - canonical definition posted to the configured OS Builder forum
+      - every update appended with version, diff, migrations, tests, rollout, and rollback
+      - published Discord target read back and verified
+
+  - id: verify
+    outputs:
+      - doctor.json
+      - verification.md
+      - end-to-end-evidence.json
+    gates:
+      - package checksum and archive safety pass
+      - install, activate, invoke, action, cron, Discord, update, rollback, and uninstall tested
+      - no restart loop, bot loop, route drift, secret leak, or unbounded automation
+
+  - id: release
+    outputs:
+      - packages/<os-id>-vX.Y.Z.zip
+      - registry/index.json
+      - SHA256SUMS
+      - release-notes.md
+    gates:
+      - signed or checksum-pinned package staged atomically
+      - known-good previous version retained
+      - monitoring and rollback owner recorded
+
+portability:
+  primary_runtime: hermes
+  targets:
+    - hermes
+    - claude-code
+    - codex
+  hermes_distribution:
+    required: true
+    required_files:
+      - distribution.yaml
+      - SOUL template or explicitly approved SOUL.md
+      - config.yaml
+      - .env.EXAMPLE
+      - skills
+      - MCP policy/config
+      - cron templates
+    preserves:
+      - credentials
+      - memories
+      - sessions
+      - state databases
+      - local overrides
+  adapters:
+    claude-code:
+      form: isolated skill plus instructions template
+      overwrite_global_instructions: false
+    codex:
+      form: isolated skill plus instructions template
+      overwrite_global_instructions: false
+  installer:
+    auto_detect: true
+    preview_first: true
+    dry_run_required: true
+    primary_first: hermes
+    copies_credentials: false
+    applies_instruction_files_only_after_confirmation: true
+    verifies:
+      - installed files
+      - runtime identity
+      - provider and fallback
+      - profile isolation
+      - package doctor
+      - gateway prerequisites when enabled
+
+discord_management:
+  required: true
+  application:
+    dedicated_by_default: true
+    owner_controls_creation_oauth_token_and_intents: true
+    administrator_permission: false
+    permissions_mode: least_privilege
+  gateway:
+    dedicated_profile: true
+    dedicated_service: true
+    token_profile_local: true
+    token_reuse_forbidden: true
+  routing:
+    exact_guild_category_channel_ids: true
+    free_response_channel_explicit: true
+    ignore_bot_messages: true
+    owner_allowlist_required: true
+  dynamic_ui:
+    primary_entrypoint: /panel
+    generated_from_registry: true
+    components:
+      - buttons
+      - selects
+      - modals
+    required_controls:
+      - refresh
+      - back
+      - close
+    authorization_recheck: true
+    sensitive_actions_ephemeral: true
+    destructive_actions_multi_stage_confirmation: true
+    stable_namespaced_custom_ids: true
+    select_pagination_limit: 25
+  commands:
+    global_and_guild_inventory_readback: true
+    diff_only_sync: true
+    restart_cooldown: true
+    stale_removal_requires_explicit_approval: true
+  automation:
+    cron_delivery_channel_explicit: true
+    no_change_silent: true
+    bot_to_bot_triggers: false
+  verification:
+    service_active: true
+    expected_bot_identity: true
+    websocket_connected: true
+    inbound_content_nonempty: true
+    authorization_accepted: true
+    profile_route: true
+    exact_inference: true
+    reply_readback: true
+    callbacks_refresh_back_close_modals: true
+    no_restart_or_sync_storm: true
+
+publication:
+  targets:
+    - role: primary
+      destination: configured AGK OS Builder forum
+      bot: environment-authorized documentation bot
+      behavior: one canonical thread per OS; append updates and rollbacks as replies
+    - role: circle-mirror
+      destination: configured Circle/legacy OS library forum
+      bot: channel-authorized Circle bot
+      behavior: mirror the canonical definition, update ledger, release notes, checksums, and recovery ZIP
+  inline_definition:
+    required: true
+    starter_repeats_thread_title: false
+    starter_purpose: concise status, active version, navigation, ownership, and source-of-truth notice
+    required_sections:
+      - mission
+      - architecture
+      - workflow
+      - integration
+      - automation
+      - lifecycle
+      - acceptance
+      - recovery
+    rendering:
+      - publish complete human-readable content as ordered Discord replies
+      - keep each message within Discord limits without cutting headings or code fences
+      - number sections and include a contents/index message
+      - attachments supplement the inline definition; they never replace it
+      - edit known message IDs on rerun instead of appending duplicate definitions
+      - read back every section and verify ordered message IDs
+  recovery_zip:
+    required: true
+    filename: <os-id>-v<version>.zip
+    required_contents:
+      - manifest
+      - workflow
+      - definition
+      - update-ledger
+      - checksums
+      - package or installer payload
+      - rollback instructions
+      - verification report
+    rules:
+      - build reproducibly from verified source files
+      - exclude credentials, private state, caches, logs, PII, and temporary files
+      - validate archive paths and CRC
+      - publish SHA-256 beside the ZIP
+      - upload the same verified bytes to every publication target
+      - read back thread, message, attachment filename, size, and URL from every target
+  mirror_failure_policy:
+    - primary publication may not be reported as fully distributed while a required mirror is missing
+    - retry with the exact authorized bot for the target guild/channel
+    - record blocked permissions or owner prerequisites without leaking tokens
+
+update_contract:
+  steps:
+    - inventory live version, profile, channel, bot, routes, jobs, provider state, and assignments
+    - build vNEXT side by side
+    - publish semantic diff and migration dry-run
+    - run doctor and acceptance matrix
+    - atomically switch active version
+    - read back Hermes, AGK, Discord, gateway, cron, and registry state
+    - append update result to the Discord ledger
+  rollback:
+    - switch to prior package and configuration pointers
+    - restore routes, assignments, jobs, and channel metadata
+    - rerun doctor and smoke tests
+    - append rollback evidence to the Discord ledger
+
+completion_report:
+  must_include:
+    - exact artifact paths and package checksum
+    - agent, skill, knowledge, workflow, function, tool, command, and eval inventory
+    - Hermes profile and provider/fallback state
+    - Discord category, channel, bot application, command, and documentation post IDs
+    - AGK registry and assignment state
+    - cron, heartbeat, webhook, and auto-wake inventory
+    - tests executed and exact pass/fail counts
+    - known limitations, owner prerequisites, monitoring, and rollback procedure

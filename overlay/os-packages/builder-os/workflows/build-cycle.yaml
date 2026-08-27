@@ -1,0 +1,20 @@
+id: build-cycle
+version: 0.1.0
+stages:
+  - id: baseline
+    output: reproducible-red-state
+  - id: design
+    requires: [baseline]
+    output: implementation-contract
+  - id: implement
+    requires: [design]
+    output: tested-artifact
+  - id: review
+    requires: [implement]
+    output: independent-verdict
+  - id: deploy
+    requires: [review]
+    output: live-artifact
+  - id: verify
+    requires: [deploy]
+    output: runtime-and-rollback-proof

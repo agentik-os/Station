@@ -1,0 +1,17 @@
+schema_version: "1.0"
+id: research-os
+name: Research OS
+version: 0.1.0
+description: Evidence-first research system for discovery, source validation, synthesis, citation, and decision-ready briefs.
+scope: [global, operator, agentik, mission, private, client, project, session]
+status: active
+license: AGK-internal
+dependencies: []
+capabilities: [source discovery, source validation, evidence synthesis, cited briefs, uncertainty tracking]
+skills: [evidence-research]
+workflows: [research-cycle]
+agents: [oracle, master-os-builder]
+tools: [web, grounded-citations, document-extraction]
+commands: [research brief, research verify]
+knowledge: [README.md]
+evals: [evals/cases.json]

@@ -1,0 +1,20 @@
+[Unit]
+Description=Build redacted AGK Fleet operational snapshot
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/fleet_snapshot.py --output /var/lib/agk-terminal/fleet/fleet-snapshot.json
+User=root
+Group=operator
+UMask=0027
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/operator/.hermes /home/operator/.agentik
+ReadOnlyPaths=/home/agentik/.hermes /home/agentik/.agentik
+ReadOnlyPaths=/home/mission/.hermes /home/mission/.agentik
+ReadOnlyPaths=/home/private/.hermes /home/private/.agentik
+ReadOnlyPaths=/opt/agentik/os-registry
+ReadWritePaths=/var/lib/agk-terminal/fleet
