@@ -17,6 +17,18 @@ rules:
       a significant mission becomes DONE. Newly discovered backlog work is documented but never started
       without explicit authorized human action.
 
+  - id: resume-interrupted-work-after-gateway-reconnect
+    title: Resume interrupted work after every gateway reconnect
+    enabled: true
+    providers: ["*"]
+    content: >-
+      After any gateway restart, shutdown recovery, interruption or reconnect, automatically resume
+      interrupted work from the durable session and requirement ledger at the first unfinished step.
+      Never replay restart/shutdown commands or tool calls whose successful results already appear in
+      history. A new user message takes priority, then compatible interrupted work continues unless the
+      user explicitly stops, replaces or invalidates it. Do not stop at a restored acknowledgement or ask
+      what to do next solely because the gateway reconnected.
+
   - id: understand-and-restructure-prompts
     title: Understand intent and restructure prompts before acting
     enabled: true
