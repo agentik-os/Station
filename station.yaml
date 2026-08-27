@@ -2,7 +2,7 @@ version: 1
 product:
   id: station
   name: Station
-  version: 0.3.1
+  version: 0.3.2
   description: Portable Discord + Hermes + AGK-TUI + Portal platform.
 components:
   agk_tui:
@@ -12,7 +12,7 @@ components:
   hermes:
     role: agent runtime, profiles, tools, memory, gateways and providers
     repository: NousResearch/hermes-agent
-    commit: fcbd1076a93841fa88855acce810e342a5b78101
+    commit: f896b386d06a11c47784a5a5676c1be31945048e
   station:
     role: installation, fleet portal, Discord lifecycle, OS packages, policy, doctor, backup and rollback
 boundaries:
