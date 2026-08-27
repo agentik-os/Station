@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drain a Station gateway to zero work, then request an in-band reload."""
 from __future__ import annotations
-import argparse,json,os,pwd,re,subprocess,sys,time
+import argparse,json,os,pwd,re,signal,subprocess,sys,time
 from pathlib import Path
 
 HERMES_SOURCE=Path('/opt/agk-terminal/hermes-agent')
@@ -38,11 +38,14 @@ def main()->int:
   return 0
  initial=status(home); old_pid=int(initial.get('pid') or 0)
  clear_drain_request,write_drain_request=_drain_api(); marker=home/'.drain_request.json'; marker_active=False
- write_drain_request(principal='station-safe-reload',suppress_notification=True,home=home); marker_active=True
- try: os.chown(marker,account.pw_uid,account.pw_gid)
- except OSError: pass
+ def cancel_signal(signum, _frame):
+  raise InterruptedError(f'safe reload cancelled by signal {signum}')
+ signal.signal(signal.SIGTERM,cancel_signal); signal.signal(signal.SIGINT,cancel_signal)
  deadline=time.monotonic()+timeout; refresh_at=time.monotonic()+300
  try:
+  write_drain_request(principal='station-safe-reload',suppress_notification=True,home=home); marker_active=True
+  try: os.chown(marker,account.pw_uid,account.pw_gid)
+  except OSError: pass
   while time.monotonic()<deadline:
    current=status(home)
    if current['active_agents']==0: break
