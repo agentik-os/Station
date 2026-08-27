@@ -208,6 +208,8 @@ install -m 0755 "$repo_root/scripts/configure-station-discord-interagent.py" \
   "$install_root/scripts/configure-station-discord-interagent.py"
 install -m 0755 "$repo_root/scripts/station_safe_gateway_reload.py" \
   "$install_root/scripts/station_safe_gateway_reload.py"
+install -m 0755 "$repo_root/scripts/tailnet_secure_input.py" \
+  "$install_root/scripts/tailnet_secure_input.py"
 install -m 0755 "$repo_root/scripts/topology.py" "$install_root/scripts/topology.py"
 install -m 0755 "$repo_root/scripts/composio_inventory.py" \
   "$install_root/scripts/composio_inventory.py"
