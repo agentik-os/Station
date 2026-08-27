@@ -18,7 +18,8 @@ INTERAGENT_TOOL_SCHEMA = {
         "properties": {
             "action": {"type": "string", "enum": ["list", "send", "inbox", "ack"]},
             "target": {"type": "string", "enum": ["operator", "agentik", "mission", "private", "collective"]},
-            "message": {"type": "string", "description": "Non-secret team message (1-4000 characters)."},
+            "mode": {"type": "string", "enum": ["note", "delegate"], "description": "note stores a quiet inbox message with no Discord thread; delegate creates/reuses an inter-agent mission thread."},
+            "message": {"type": "string", "description": "Non-secret team message or delegated mission (1-4000 characters)."},
             "message_id": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
@@ -53,7 +54,7 @@ def request(payload: dict) -> dict:
 def handle_interagent(args: dict, **_kwargs) -> str:
     action = str(args.get("action") or "").strip().lower()
     payload = {"action": action}
-    for key in ("target", "message", "message_id", "limit"):
+    for key in ("target", "mode", "message", "message_id", "limit"):
         if args.get(key) is not None:
             payload[key] = args[key]
     try:
@@ -70,13 +71,15 @@ def interagent_prompt(_session_info: dict | None = None) -> str:
         "Station team communication: Operator, MISSION, Agentik, Private and Collective can contact "
         "one another with the station_interagent tool. Operator is the global administrator. Send only "
         "explicit non-secret messages; the broker never grants access to another Linux user's files, "
-        "memory or private state. Route routine work directly to the agent that owns the domain. Use "
-        "Operator only for root-owned host, network, cross-profile, global Discord, backup, or rollback boundaries; "
-        "do not escalate ordinary profile-local work to Operator. Every peer request uses this tool rather than "
-        "injecting text into an agent's active/main session. The broker serializes work with at most three concurrent "
-        "deliveries and reuses one soft Discord handoff thread per source→target pair, auto-archived after one hour. "
-        "Acknowledge and work inside that existing thread. Do not send ACK, progress, or final messages back through "
-        "station_interagent; reply in the current handoff thread so status traffic cannot create ping-pong work. "
-        "Use inbox only for durable unread handoffs and ack after processing. Do not claim cross-Station communication "
+        "memory or private state. Continue an agent's own mission, next plan step, recovery, ACK, progress, and final "
+        "inside that agent's existing conversation: never call station_interagent and never create a self-thread. "
+        "For rare cross-agent communication, send mode=note for a quiet durable inbox item with no Discord thread. "
+        "Use mode=delegate only when one agent genuinely assigns a bounded mission to a different agent; only that "
+        "mode may create or reuse a soft delegation thread, auto-archived after one hour. Route delegated work directly "
+        "to the owning agent. Use Operator only for root-owned host, network, cross-profile, global Discord, backup, "
+        "or rollback boundaries; do not escalate ordinary profile-local work. A delegated target acknowledges and works "
+        "inside that delegation thread. ACK, progress, final, plan continuation, and follow-up actions stay in the "
+        "current conversation/thread and must never call station_interagent back, preventing ping-pong and thread storms. "
+        "Use inbox for durable unread notes/delegations and ack after processing. Do not claim cross-Station communication "
         "is unavailable while this tool is ready."
     )

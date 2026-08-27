@@ -121,7 +121,7 @@ Discord exposes `/recap` on Operator to audit the current conversation against e
 
 ## Inter-agent Discord delivery
 
-Every Station peer request uses the UID-authenticated `station_interagent` broker. The broker persists first, runs at most three deliveries concurrently, routes routine work directly to the owning peer, and reserves Operator for root/global boundaries. It reuses one soft Discord handoff thread per source→target pair, auto-archived after one hour, then posts a real source-bot message with an explicit target-bot mention. It never injects a peer prompt into an agent's active/main session and rejects self-directed bot prompts. ACK/progress/final replies stay in the pair thread and never create reverse broker handoffs.
+Every Station agent continues its own mission, plan steps, recovery, ACKs, progress, and final response in its existing conversation. It never creates a thread for itself. `station_interagent send` has two explicit modes: `note` stores a quiet durable inbox item with no Discord post or thread; `delegate` is reserved for a genuine bounded mission assigned to a different agent and is the only mode allowed to create/reuse a soft source→target delegation thread. Threads auto-archive after one hour. ACK/progress/final replies remain inside the current delegation thread and never create reverse handoffs. Operator is reserved for root/global boundaries; Gareth creates thematic owner threads manually.
 
 All Station Discord replies are plain by default: full-message `>>>` blockquote backgrounds are removed. Any web URL that appears only inside inline/fenced code is repeated outside code as a clickable link.
 

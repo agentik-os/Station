@@ -77,13 +77,15 @@ class MessageStore:
         try: self.path.chmod(0o600)
         except OSError: pass
 
-    def send(self, source: str, target: str, body: str) -> dict:
+    def send(self, source: str, target: str, body: str, *, mode: str = "note") -> dict:
         if source not in ENVIRONMENTS or target not in ENVIRONMENTS:
             raise BrokerError("unknown Station target")
         if source == target:
             raise BrokerError("self-directed inter-agent messages are forbidden")
+        if mode not in {"note", "delegate"}:
+            raise BrokerError("inter-agent send mode must be note or delegate")
         value = validate_message(body)
-        record = {"id": uuid.uuid4().hex, "source": source, "target": target, "body": value, "created_at": time.time(), "acknowledged_at": None}
+        record = {"id": uuid.uuid4().hex, "source": source, "target": target, "mode": mode, "body": value, "created_at": time.time(), "acknowledged_at": None}
         self.db.execute("INSERT INTO messages VALUES(?,?,?,?,?,NULL)", (record["id"], source, target, value, record["created_at"]))
         self.db.commit()
         return record
@@ -144,7 +146,7 @@ def dispatch_interagent_work(record: dict) -> dict | None:
 
 
 def queue_interagent_work(record: dict) -> bool:
-    if record.get("source")==record.get("target") or not WORK_DISPATCHER.is_file(): return False
+    if record.get("mode") != "delegate" or record.get("source")==record.get("target") or not WORK_DISPATCHER.is_file(): return False
     def worker():
         if not dispatch_interagent_work(record): notify(record)
     _WORK_POOL.submit(worker)
@@ -166,16 +168,22 @@ class Handler(socketserver.StreamRequestHandler):
             action = str(request.get("action") or "")
             store: MessageStore = self.server.store
             if action == "send":
-                record = store.send(source, str(request.get("target") or ""), str(request.get("message") or ""))
+                mode = str(request.get("mode") or "note").strip().lower()
+                record = store.send(source, str(request.get("target") or ""), str(request.get("message") or ""), mode=mode)
                 queued = queue_interagent_work(record)
-                delivered = False if queued else notify(record)
+                # Notes are intentionally inbox-only: no Discord post/thread and no active-session interruption.
+                delivered = False
+                if mode == "delegate" and not queued:
+                    delivered = notify(record)
                 response = {
                     "success": True,
                     "message_id": record["id"],
                     "source": source,
                     "target": record["target"],
+                    "mode": mode,
                     "discord_notified": delivered,
                     "work_queued": queued,
+                    "thread_created": queued,
                     "operator_work_queued": queued and record["target"] == "operator",
                 }
             elif action == "inbox":

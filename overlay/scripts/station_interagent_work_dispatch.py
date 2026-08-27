@@ -39,13 +39,16 @@ def validate_record(record: dict) -> dict:
     target = str(value.get("target") or "")
     if target not in {"operator", "agentik", "mission", "private", "collective"}:
         raise DispatchError("invalid inter-agent target")
+    mode = str(value.get("mode") or "")
+    if mode != "delegate":
+        raise DispatchError("Discord threads require an explicit cross-agent delegation")
     if source == target:
         raise DispatchError("self-directed bot prompts are forbidden")
     if not 1 <= len(body) <= 4000:
         raise DispatchError("invalid inter-agent message body")
     if _SECRET.search(body):
         raise DispatchError("secret-like content is forbidden in work dispatch")
-    return {"id": message_id, "source": source, "target": target, "body": body}
+    return {"id": message_id, "source": source, "target": target, "mode": mode, "body": body}
 
 
 def thread_title(source: str, body: str) -> str:
