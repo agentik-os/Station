@@ -6,11 +6,10 @@ hermes_home=${HERMES_HOME:-${HOME:?}/.hermes}
 case "$hermes_home" in
   ""|/) echo "refusing unsafe HERMES_HOME: ${hermes_home:-<empty>}" >&2; exit 2 ;;
 esac
-agent_source=$install_root/agents/master-os-builder
-if [ ! -d "$agent_source" ]; then
-  agent_source=$install_root/hermes/agents/master-os-builder
+agent_source_root=$install_root/agents
+if [ ! -d "$agent_source_root" ]; then
+  agent_source_root=$install_root/hermes/agents
 fi
-agent_target=$hermes_home/agents/master-os-builder
 resolve_executable() {
   local path=$1 target
   while [ -L "$path" ]; do
@@ -103,7 +102,7 @@ if [ "$discord_admin_json" != "[]" ]; then
   hermes config set platforms.discord.extra.allow_admin_from "$discord_admin_json" >/dev/null
   hermes config set platforms.discord.extra.group_allow_admin_from "$discord_admin_json" >/dev/null
 fi
-for plugin_path in agentik_os platforms/discord; do
+for plugin_path in agentik_os agk_discord_ui_policy platforms/discord; do
   plugin_target=$hermes_home/plugins/$plugin_path
   mkdir -p "$(dirname "$plugin_target")"
   rm -rf "$plugin_target.new"
@@ -123,10 +122,16 @@ if [ -d "$install_root/hermes/skills" ]; then
   done
 fi
 
-rm -rf "$agent_target.new"
-cp -a "$agent_source" "$agent_target.new"
-rm -rf "$agent_target"
-mv "$agent_target.new" "$agent_target"
+if [ -d "$agent_source_root" ]; then
+  for agent_source in "$agent_source_root"/*; do
+    [ -d "$agent_source" ] || continue
+    agent_target=$hermes_home/agents/$(basename "$agent_source")
+    rm -rf "$agent_target.new"
+    cp -a "$agent_source" "$agent_target.new"
+    rm -rf "$agent_target"
+    mv "$agent_target.new" "$agent_target"
+  done
+fi
 
 install -m 0644 \
   "$install_root/hermes/dashboard-themes/agentik-shadcn.yaml" \
@@ -135,10 +140,11 @@ install -m 0644 \
   "$install_root/hermes/dashboard-themes/agentik-shadcn-light.yaml" \
   "$hermes_home/dashboard-themes/agentik-shadcn-light.yaml"
 
-for plugin_path in agentik_os platforms/discord; do
+for plugin_path in agentik_os agk_discord_ui_policy platforms/discord; do
   hermes plugins doctor --ci "$hermes_home/plugins/$plugin_path" >/dev/null
 done
 hermes plugins enable --no-allow-tool-override agentik-os >/dev/null
+hermes plugins enable --no-allow-tool-override agk-discord-ui-policy >/dev/null
 hermes plugins enable --no-allow-tool-override platforms/discord >/dev/null
 "$install_root/venv/bin/python" "$install_root/scripts/sync-power-stack.py" \
   --manifest "$install_root/config/power-stack.yaml" \

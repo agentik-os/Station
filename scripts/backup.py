@@ -9,7 +9,7 @@ BASE_PATHS = [
     "/home/operator/.config/systemd/user", "/home/agentik/.config/systemd/user",
     "/home/mission/.config/systemd/user", "/home/private/.config/systemd/user",
 ]
-PROFILE_FILES = (".hermes/config.yaml", ".hermes/.env", ".hermes/auth.json", ".agentik/os-assignments.yaml")
+PROFILE_FILES = (".hermes/config.yaml", ".hermes/.env", ".hermes/auth.json", ".hermes/completion", ".hermes/reports", ".agentik/os-assignments.yaml")
 
 def main() -> int:
     parser=argparse.ArgumentParser(); parser.add_argument("--output-dir", default="/var/backups/station"); parser.add_argument("--full-state", action="store_true"); args=parser.parse_args()

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>AGK — Station</title>
+  <link rel="stylesheet" href="station-owner.css">
+</head>
+<body data-surface="configure">
+  <div class="station-shell">
+    <header class="station-header station-meta">
+      <span>AGK / STATION</span>
+      <span>OWNER INTERFACE / CONFIGURE</span>
+    </header>
+    <main class="station-main">
+      <section>
+        <div class="station-kicker">Utility / 01</div>
+        <h1 class="station-title">Clear action.</h1>
+        <p class="station-copy">State the task, consequence, and evidence in direct operational language.</p>
+      </section>
+      <section class="station-form" aria-labelledby="form-title">
+        <h2 id="form-title">Configure</h2>
+        <div class="station-field">
+          <label class="station-label" for="value">Value</label>
+          <input class="station-input" id="value" name="value" placeholder="Enter value" autocomplete="off">
+        </div>
+        <div class="station-actions">
+          <button class="station-button" type="button">Run</button>
+          <button class="station-button secondary" type="button">Cancel</button>
+        </div>
+        <div class="station-status" role="status" aria-live="polite">Ready.</div>
+      </section>
+    </main>
+    <footer class="station-footer">
+      <span>Transport / contextual</span>
+      <span>Retention / policy-bound</span>
+    </footer>
+  </div>
+</body>
+</html>

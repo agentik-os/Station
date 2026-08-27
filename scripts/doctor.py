@@ -79,6 +79,14 @@ def registry_check() -> Check:
     return Check("os:core-packages", True, expected.issubset(identities), f"{len(expected & identities)}/{len(expected)}")
 
 
+def recovery_index_check() -> Check:
+    path = Path("/var/lib/station/recovery/index.json")
+    if not path.is_file():
+        return Check("recovery:index", True, False, "missing")
+    age = max(0, int(__import__("time").time() - path.stat().st_mtime))
+    return Check("recovery:index", True, age < 172800, f"age={age}s")
+
+
 def collect_checks() -> list[Check]:
     checks = [command_check(name) for name in ("station", "agk", "hermes", "rmux")]
     for user in ("operator", "agentik", "mission", "private"):
@@ -94,6 +102,8 @@ def collect_checks() -> list[Check]:
     checks.extend([
         user_service("operator", "hermes-fleet.service"),
         Check("timer:fleet-snapshot", True, run(["systemctl", "is-active", "agk-fleet-snapshot.timer"]).stdout.strip() == "active", "system timer"),
+        Check("timer:recovery-auditor", True, run(["systemctl", "is-active", "agk-recovery-auditor.timer"]).stdout.strip() == "active", "daily system timer"),
+        recovery_index_check(),
         portal_check(),
         registry_check(),
     ])

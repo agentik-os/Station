@@ -1,0 +1,15 @@
+[Unit]
+Description=AGK profile-isolated Completion Recovery Auditor
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0027
+ExecStart=/usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/fleet_recovery_auditor.py --output /var/lib/station/recovery/index.json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/operator/.hermes /home/agentik/.hermes /home/mission/.hermes /home/private/.hermes /var/lib/station/recovery

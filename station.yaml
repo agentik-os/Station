@@ -2,7 +2,7 @@ version: 1
 product:
   id: station
   name: Station
-  version: 0.1.0
+  version: 0.2.0
   description: Portable Discord + Hermes + AGK-TUI + Portal platform.
 components:
   agk_tui:

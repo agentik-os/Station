@@ -98,6 +98,27 @@ Station installs and assigns:
 
 Their skills are projected into default and named Hermes profiles, while the package registry and assignments remain versioned and inspectable.
 
+## Completion Recovery System
+
+Station preserves original prompts inside each profile boundary, maps requirements to missions, artifacts and evidence, and rejects false `DONE` states. Significant missions use:
+
+```text
+PROMPT → REQUIREMENT GRAPH → TASKS → ARTIFACTS → EVIDENCE
+       → VERIFICATION → GAUNTLET → COMPLETION ORACLE → DONE
+```
+
+Daily profile-local auditing finds incomplete, partial, falsely completed and promised-but-missing work. Operator receives only sanitized fleet metadata; original prompts remain in the owning Linux/Hermes profile and are loaded there only after an explicit human `RELAUNCH` decision.
+
+```bash
+station recovery audit
+sudo station recovery baseline
+station recovery report
+sudo station recovery decide FINDING-ID RELAUNCH --actor gareth --source discord
+sudo station recovery oracle-pass operator MISS-ID /home/operator/.hermes/reports/completion-oracle/MISS-ID.json --actor completion-oracle
+```
+
+Discord exposes `/station-recovery` on Operator with Refresh/Close and explicit `Relaunch Mission`, `Keep Backlog`, `Already Done` and `Ignore` controls. Viewing a report never authorizes execution. Human approvals are root-owned and bound to the exact requirement digest; Completion Oracle verdicts are root-owned and bound to the exact full-ledger digest, so later edits invalidate stale trust automatically.
+
 ## Lifecycle
 
 ```bash

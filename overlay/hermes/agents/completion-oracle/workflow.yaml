@@ -1,0 +1,9 @@
+id: completion-oracle-cycle
+stages:
+  - original-prompts
+  - requirement-ledger
+  - artifact-edges
+  - evidence-edges
+  - approval-gates
+  - adversarial-missing-work-search
+  - verdict

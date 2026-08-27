@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_station_manifest_pins_upstreams_and_product_boundary():
     manifest = yaml.safe_load((ROOT / "station.yaml").read_text())
     assert manifest["product"]["id"] == "station"
-    assert manifest["product"]["version"] == "0.1.0"
+    assert manifest["product"]["version"] == "0.2.0"
     for component in ("agk_tui", "hermes"):
         commit = manifest["components"][component]["commit"]
         assert re.fullmatch(r"[0-9a-f]{40}", commit)
@@ -29,6 +29,9 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     assert "overlay" in bootstrap
     assert "bootstrap-vps.sh" in bootstrap
     assert "install-hermes-fleet-dashboard.sh" in bootstrap
+    assert "completion_harness.py" in (ROOT / "overlay" / "install.sh").read_text()
+    assert "agk-recovery-auditor.timer" in (ROOT / "overlay" / "install.sh").read_text()
+    assert "agk_discord_ui_policy" in (ROOT / "overlay" / "install.sh").read_text()
     assert "station doctor" in bootstrap
     assert "DISCORD_BOT_TOKEN" not in bootstrap
     for path in (ROOT / "install", ROOT / "bootstrap-vps.sh"):

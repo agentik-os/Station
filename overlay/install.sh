@@ -217,6 +217,18 @@ install -m 0755 "$repo_root/scripts/rotate_discord_token.py" \
   "$install_root/scripts/rotate_discord_token.py"
 install -m 0755 "$repo_root/scripts/install_core_os_packages.py" \
   "$install_root/scripts/install_core_os_packages.py"
+install -m 0755 "$repo_root/scripts/completion_harness.py" \
+  "$install_root/scripts/completion_harness.py"
+install -m 0755 "$repo_root/scripts/recovery_auditor.py" \
+  "$install_root/scripts/recovery_auditor.py"
+install -m 0755 "$repo_root/scripts/fleet_recovery_auditor.py" \
+  "$install_root/scripts/fleet_recovery_auditor.py"
+install -m 0755 "$repo_root/scripts/recovery_router.py" \
+  "$install_root/scripts/recovery_router.py"
+install -m 0755 "$repo_root/scripts/completion_oracle_gate.py" \
+  "$install_root/scripts/completion_oracle_gate.py"
+install -m 0755 "$repo_root/scripts/approval_gate.py" \
+  "$install_root/scripts/approval_gate.py"
 install -m 0755 "$repo_root/scripts/client_control.py" \
   "$install_root/scripts/client_control.py"
 install -m 0755 "$repo_root/scripts/install-hermes-fleet-dashboard.sh" \
@@ -229,16 +241,19 @@ install -m 0644 "$repo_root/config/power-stack.yaml" \
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"
 rm -rf "$install_root/hermes/plugins/agentik_os" \
   "$install_root/hermes/plugins/agk_power_stack" \
+  "$install_root/hermes/plugins/agk_discord_ui_policy" \
   "$install_root/hermes/plugins/platforms/discord"
 cp -a "$repo_root/hermes/plugins/agentik_os" "$install_root/hermes/plugins/"
 cp -a "$repo_root/hermes/plugins/agk_power_stack" "$install_root/hermes/plugins/"
+cp -a "$repo_root/hermes/plugins/agk_discord_ui_policy" "$install_root/hermes/plugins/"
 cp -a "$repo_root/hermes/plugins/platforms/discord" \
   "$install_root/hermes/plugins/platforms/"
 install -m 0644 "$repo_root/hermes/dashboard-themes/agentik-shadcn.yaml" \
   "$install_root/hermes/dashboard-themes/agentik-shadcn.yaml"
 install -m 0644 "$repo_root/hermes/dashboard-themes/agentik-shadcn-light.yaml" \
   "$install_root/hermes/dashboard-themes/agentik-shadcn-light.yaml"
-cp -a "$repo_root/hermes/agents/master-os-builder" "$install_root/agents/"
+rm -rf "$install_root/agents"
+cp -a "$repo_root/hermes/agents" "$install_root/agents"
 rm -rf "$install_root/client"
 cp -a "$repo_root/client" "$install_root/client"
 rm -rf "$install_root/os-packages"
@@ -287,10 +302,17 @@ if [ "$system_install" = true ]; then
     /etc/systemd/system/agk-fleet-snapshot.service
   install -m 0644 "$repo_root/systemd/agk-fleet-snapshot.timer" \
     /etc/systemd/system/agk-fleet-snapshot.timer
+  install -m 0644 "$repo_root/systemd/agk-recovery-auditor.service" \
+    /etc/systemd/system/agk-recovery-auditor.service
+  install -m 0644 "$repo_root/systemd/agk-recovery-auditor.timer" \
+    /etc/systemd/system/agk-recovery-auditor.timer
   install -m 0644 "$repo_root/systemd/agk-interagent-broker.service" \
     /etc/systemd/system/agk-interagent-broker.service
   install -d -m 0755 /var/lib/agk-terminal
   install -d -m 0750 -o root -g operator /var/lib/agk-terminal/fleet
+  install -d -m 0711 -o root -g root /var/lib/station/recovery
+  install -d -m 0711 -o root -g root /var/lib/station/recovery/approvals
+  install -d -m 0711 -o root -g root /var/lib/station/recovery/oracle
   chown root:operator /var/lib/agk-terminal/fleet
   chmod 0750 /var/lib/agk-terminal/fleet
   "$install_root/venv/bin/python" "$install_root/scripts/install_core_os_packages.py" \
@@ -303,6 +325,7 @@ if [ "$system_install" = true ]; then
   systemctl daemon-reload
   systemctl enable --now agk-gateway-watchdog.timer
   systemctl enable --now agk-fleet-snapshot.timer
+  systemctl enable --now agk-recovery-auditor.timer
   systemctl enable --now agk-interagent-broker.service
   if [ "$defer_topology" = false ]; then
     "$install_root/scripts/topology.py" apply --yes

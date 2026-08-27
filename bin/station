@@ -29,6 +29,44 @@ case "$command" in
     exec /usr/local/lib/agk-terminal/venv/bin/python \
       /usr/local/lib/agk-terminal/scripts/rotate_discord_token.py "$@"
     ;;
+  completion)
+    exec /usr/local/lib/agk-terminal/venv/bin/python \
+      /usr/local/lib/agk-terminal/scripts/completion_harness.py \
+      --root "${HERMES_HOME:-$HOME/.hermes}/completion" "$@"
+    ;;
+  recovery)
+    action=${1:-audit}; shift || true
+    case "$action" in
+      audit)
+        if [ "$(id -u)" -eq 0 ]; then
+          exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/fleet_recovery_auditor.py "$@"
+        fi
+        exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/recovery_auditor.py \
+          --profile "${STATION_PROFILE:-$(id -un)}" --state-db "${HERMES_HOME:-$HOME/.hermes}/state.db" \
+          --completion-root "${HERMES_HOME:-$HOME/.hermes}/completion" --reports-root "${HERMES_HOME:-$HOME/.hermes}/reports" "$@"
+        ;;
+      baseline)
+        [ "$(id -u)" -eq 0 ] || { echo "Fleet baseline requires sudo" >&2; exit 1; }
+        exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/fleet_recovery_auditor.py --baseline "$@"
+        ;;
+      decide)
+        [ "$(id -u)" -eq 0 ] || { echo "Recovery decisions require sudo" >&2; exit 1; }
+        exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/recovery_router.py "$@"
+        ;;
+      approve)
+        [ "$(id -u)" -eq 0 ] || { echo "Human approval evidence requires sudo" >&2; exit 1; }
+        exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/approval_gate.py "$@"
+        ;;
+      oracle-pass)
+        [ "$(id -u)" -eq 0 ] || { echo "Completion Oracle evidence requires sudo" >&2; exit 1; }
+        exec /usr/local/lib/agk-terminal/venv/bin/python /usr/local/lib/agk-terminal/scripts/completion_oracle_gate.py "$@"
+        ;;
+      report)
+        exec python3 -m json.tool /var/lib/station/recovery/index.json
+        ;;
+      *) echo "usage: station recovery {audit|baseline|report|decide|oracle-pass} ..." >&2; exit 2 ;;
+    esac
+    ;;
   backup)
     [ "$(id -u)" -eq 0 ] || { echo "Station backup requires sudo" >&2; exit 1; }
     exec python3 "$root/scripts/backup.py" "$@"
@@ -54,6 +92,13 @@ Station · portable Discord + Hermes + AGK-TUI + Portal platform
   sudo station discord token list
   sudo station discord token check TARGET
   sudo station discord token rotate TARGET
+  station completion {archive-prompt|gate} ...
+  station recovery audit
+  sudo station recovery baseline
+  station recovery report
+  sudo station recovery decide FINDING {RELAUNCH|BACKLOG|IGNORE|ALREADY_DONE} --actor NAME --source SOURCE
+  sudo station recovery approve PROFILE MISSION REQUIREMENT --actor NAME --source discord --scope production
+  sudo station recovery oracle-pass PROFILE MISSION REPORT.json --actor completion-oracle
   sudo station backup
   sudo station update [--ref REF]
   sudo station rollback [RELEASE]

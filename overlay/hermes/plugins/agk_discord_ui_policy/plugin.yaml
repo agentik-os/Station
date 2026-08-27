@@ -1,0 +1,5 @@
+name: agk-discord-ui-policy
+version: 0.2.0
+description: "Enforces clean dynamic owner interactions and the canonical Station design kit."
+author: "AGK"
+kind: standalone

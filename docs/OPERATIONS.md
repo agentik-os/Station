@@ -17,6 +17,19 @@ sudo station discord token rotate TARGET
 
 Rotation uses hidden input and validates the Discord bot before writing. Application creation, privileged intents and OAuth installation remain owner-controlled.
 
+## Completion Recovery
+
+```bash
+station recovery audit
+sudo station recovery baseline
+station recovery report
+sudo station recovery decide FINDING RELAUNCH --actor gareth --source discord
+sudo station recovery approve PROFILE MISSION REQUIREMENT --actor gareth --source discord --scope production
+sudo station recovery oracle-pass PROFILE MISSION REPORT.json --actor completion-oracle
+```
+
+The auditor runs daily inside each profile boundary. Root-owned approval files bind to the exact requirement digest. Root-owned Oracle verdicts bind to the complete ledger digest, including verified prompt archive bytes; any later prompt, requirement, artifact or evidence mutation invalidates stale trust. Discovery never authorizes execution.
+
 ## Backup and recovery
 
 ```bash

@@ -148,11 +148,13 @@ try:
     from .ffmpeg_utils import resolve_ffmpeg_executable
     from .agk_client_reviews import register_agk_client_review_listener
     from .agk_session_control_ui import register_station_session_commands
+    from .agk_recovery_ui import register_recovery_commands
     from .agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
 except ImportError:
     from ffmpeg_utils import resolve_ffmpeg_executable
     from agk_client_reviews import register_agk_client_review_listener
     from agk_session_control_ui import register_station_session_commands
+    from agk_recovery_ui import register_recovery_commands
     from agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
 
 from gateway.config import Platform, PlatformConfig
@@ -1642,7 +1644,17 @@ class DiscordAdapter(BasePlatformAdapter):
                 mentioned.bot and mentioned != self._client.user
                 for mentioned in message.mentions
             )
-            if other_bots_mentioned and not raw_self_mention:
+            human_active_thread_reference = (
+                not getattr(message.author, "bot", False)
+                and isinstance(message.channel, getattr(discord, "Thread", ()))
+                and str(message.channel.id) in self._threads
+                and not self._discord_thread_require_mention()
+            )
+            if (
+                other_bots_mentioned
+                and not raw_self_mention
+                and not human_active_thread_reference
+            ):
                 return False, False
             ignore_no_mention = os.getenv(
                 "DISCORD_IGNORE_NO_MENTION", "true"
@@ -6661,8 +6673,9 @@ class DiscordAdapter(BasePlatformAdapter):
         tree = self._client.tree
         try:
             register_station_session_commands(self, tree)
+            register_recovery_commands(self, tree)
         except Exception as exc:
-            logger.warning("Station Session Control Center registration failed: %s", exc)
+            logger.warning("Station control center registration failed: %s", exc)
         # Dynamic Views are the durable public surface. Future profile bots
         # inherit this policy when sync-hermes installs the adapter.
         ui_only = str(

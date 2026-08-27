@@ -1,0 +1,8 @@
+id: recovery-auditor
+name: AGK Recovery Auditor
+version: 0.1.0
+runtime: hermes
+scope: [operator]
+description: Independent daily auditor for incomplete, partial, falsely completed and promised-but-missing work. It never starts work.
+prompt: prompt.md
+workflow: workflow.yaml

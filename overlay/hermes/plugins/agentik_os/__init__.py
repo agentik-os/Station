@@ -13,6 +13,13 @@ from .agent_registry import AGENT_TOOL_SCHEMA, AgentCommandService, agent_router
 from .owner_context import owner_context_prompt
 from .interagent import INTERAGENT_TOOL_SCHEMA, broker_available, handle_interagent, interagent_prompt
 from .rules import rules_prompt
+from .completion import (
+    AGK_COMPLETION_TOOL_SCHEMA,
+    archive_before_execution,
+    completion_available,
+    completion_prompt,
+    handle_completion,
+)
 
 
 def register(ctx) -> None:
@@ -71,11 +78,27 @@ def register(ctx) -> None:
         description="UID-authenticated non-secret team messaging across Station agents, administered by Operator.",
         emoji="↔",
     )
+    ctx.register_tool(
+        name="agk_completion",
+        toolset="terminal",
+        schema=AGK_COMPLETION_TOOL_SCHEMA,
+        handler=handle_completion,
+        check_fn=completion_available,
+        description="Persistent prompt, requirement, artifact, evidence and completion-gate graph.",
+        emoji="✓",
+    )
+    ctx.register_hook("pre_llm_call", archive_before_execution)
     ctx.register_system_prompt_section(
         "agentik.agent-router",
         agent_router_prompt,
         position="after_memory",
         max_chars=1400,
+    )
+    ctx.register_system_prompt_section(
+        "agentik.completion-harness",
+        completion_prompt,
+        position="after_memory",
+        max_chars=1800,
     )
     ctx.register_system_prompt_section(
         "agentik.global-rules",

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AGK Completion Recovery Auditor daily
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+RandomizedDelaySec=5m
+Persistent=true
+Unit=agk-recovery-auditor.service
+
+[Install]
+WantedBy=timers.target

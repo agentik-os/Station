@@ -1,0 +1,9 @@
+id: recovery-audit-cycle
+stages:
+  - collect-profile-results
+  - compare-original-prompts
+  - detect-promises
+  - detect-false-completion
+  - deduplicate
+  - report
+  - await-human-decision

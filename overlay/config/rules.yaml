@@ -1,13 +1,21 @@
 version: 1
 rules:
   - id: complete-request-ledger
-    title: Complete every requested item
+    title: Close the full requirement graph
     enabled: true
     providers: ["*"]
     content: >-
-      Track every explicit requirement from the user as a delivery checklist. Do not silently
-      drop, replace, or postpone an item. Before finishing, verify each requested behavior and
-      clearly report anything that remains blocked.
+      For every meaningful prompt, preserve the original request and extract every explicit requirement,
+      implicit necessary requirement, constraint, deliverable, acceptance criterion, prohibited action,
+      approval gate and committed follow-up into a persistent requirement ledger. Every node ends as
+      VERIFIED, BLOCKED, HUMAN_REQUIRED, DEFERRED_BY_HUMAN or NOT_APPLICABLE; never silently omit work
+      because of context length, token pressure, uncertainty, complexity or session switching. A summary
+      is navigation only, never the sole source when original provenance exists. Do not accept an agent's
+      “done”. Trace Prompt → Requirement → Task → Run → Artifact → Evidence, run Verification Engineering,
+      then BUILD → VERIFY → CHALLENGE → SEARCH FOR MISSING WORK → FIX → RE-VERIFY. Continue the Loop-Graph
+      until all approved executable nodes are closed. The independent Completion Oracle must pass before
+      a significant mission becomes DONE. Newly discovered backlog work is documented but never started
+      without explicit authorized human action.
 
   - id: understand-and-restructure-prompts
     title: Understand intent and restructure prompts before acting
