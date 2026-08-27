@@ -36,6 +36,13 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     shared=(ROOT / "overlay" / "scripts" / "install-shared-hermes.sh").read_text()
     assert "DISCORD_ALLOW_BOTS=mentions" in shared
     assert "DISCORD_BOTS_REQUIRE_INLINE_MENTION=true" in shared
+    assert "agent.restart_drain_timeout 1800" in shared
+    assert "agent.restart_after_turn_timeout 1800" in shared
+    assert "TimeoutStopSec=1860" in shared
+    safe_reload=(ROOT/"overlay/scripts/station_safe_gateway_reload.py").read_text()
+    assert "write_drain_request" in safe_reload and "clear_drain_request" in safe_reload
+    assert "active work did not drain; reload cancelled without interrupting it" in safe_reload
+    assert "RestartUnit" not in safe_reload and " restart " not in safe_reload
     assert "1541816910587625492,1541817649661747351,1541817976586637382,1541817162241540126,1541131574509314209" in shared
     broker=(ROOT/"overlay/scripts/station_interagent_broker.py").read_text()
     dispatch=(ROOT/"overlay/scripts/station_interagent_work_dispatch.py").read_text()

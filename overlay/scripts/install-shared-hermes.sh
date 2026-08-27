@@ -157,6 +157,10 @@ for user_name in "${users[@]}"; do
     "$install_root/scripts/sync-hermes.sh"
   python3 "$install_root/scripts/configure-station-discord-interagent.py" "$home_dir/.hermes/.env"
   chown "$user_name:$(id -gn "$user_name")" "$home_dir/.hermes/.env"
+  sudo -u "$user_name" env HOME="$home_dir" HERMES_HOME="$home_dir/.hermes" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+    "$official_dir/venv/bin/hermes" config set agent.restart_drain_timeout 1800 >/dev/null
+  sudo -u "$user_name" env HOME="$home_dir" HERMES_HOME="$home_dir/.hermes" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+    "$official_dir/venv/bin/hermes" config set agent.restart_after_turn_timeout 1800 >/dev/null
 
   unit_dir=$home_dir/.config/systemd/user
   [ -d "$unit_dir" ] || continue
@@ -164,7 +168,7 @@ for user_name in "${users[@]}"; do
     gateway_name=$(basename "$gateway_unit")
     dropin_dir="$unit_dir/$gateway_name.d"
     install -d -m 0755 -o "$user_name" -g "$(id -gn "$user_name")" "$dropin_dir"
-    printf '%s\n' '[Service]' 'Environment=DISCORD_ALLOW_BOTS=mentions' 'Environment=DISCORD_BOTS_REQUIRE_INLINE_MENTION=true' \
+    printf '%s\n' '[Service]' 'TimeoutStopSec=1860' 'Environment=DISCORD_ALLOW_BOTS=mentions' 'Environment=DISCORD_BOTS_REQUIRE_INLINE_MENTION=true' \
       'Environment=DISCORD_ALLOWED_USERS=1441423462492016821,1541816910587625492,1541817649661747351,1541817976586637382,1541817162241540126,1541131574509314209' \
       > "$dropin_dir/30-station-interagent.conf"
     chown "$user_name:$(id -gn "$user_name")" "$dropin_dir/30-station-interagent.conf"
@@ -185,6 +189,11 @@ for profile_env in /home/*/.hermes/profiles/*/.env; do
   owner=$(stat -c %U "$profile_env")
   python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
   chown "$owner:$(id -gn "$owner")" "$profile_env"
+  profile_home=$(dirname "$profile_env")
+  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+    "$official_dir/venv/bin/hermes" config set agent.restart_drain_timeout 1800 >/dev/null
+  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+    "$official_dir/venv/bin/hermes" config set agent.restart_after_turn_timeout 1800 >/dev/null
 done
 
 for user_name in "${users[@]}"; do
