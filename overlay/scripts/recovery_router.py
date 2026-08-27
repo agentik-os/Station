@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Human-gated recovery decisions and cross-profile routing without state copying."""
 from __future__ import annotations
-import argparse, importlib.util, json, os, pwd, sqlite3
+import argparse, fcntl, importlib.util, json, os, pwd, sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,9 +23,9 @@ def resolve_finding(finding_id: str):
         db_path = Path(home) / "completion" / "completion.db"
         if not db_path.is_file(): continue
         db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try: row = db.execute("SELECT mission_id FROM findings WHERE id=?", (finding_id,)).fetchone()
+        try: row = db.execute("SELECT mission_id,human_decision FROM findings WHERE id=?", (finding_id,)).fetchone()
         finally: db.close()
-        if row: return profile, user, home, str(row[0])
+        if row: return profile, user, home, str(row[0]), (str(row[1]) if row[1] is not None else None)
     raise KeyError(finding_id)
 
 
@@ -48,7 +48,14 @@ def decide(finding_id: str, decision: str, actor: str, source: str) -> dict:
     decision=decision.upper(); actor=actor.strip(); source=source.strip()
     if decision not in DECISIONS or not actor or len(actor)>100 or source not in {"discord","local-owner"}:
         raise PermissionError("an explicit typed decision, bounded actor and trusted source are required")
-    profile,user,home,mission_id=resolve_finding(finding_id)
+    lock_path=Path("/var/lib/station/recovery/.decision.lock"); lock_path.parent.mkdir(parents=True,exist_ok=True)
+    lock_handle=lock_path.open("a+"); fcntl.flock(lock_handle.fileno(),fcntl.LOCK_EX)
+    profile,user,home,mission_id,existing_decision=resolve_finding(finding_id)
+    existing_dispatch=Path("/var/lib/station/recovery/dispatch")/f"{finding_id}.json"
+    if existing_decision is not None:
+        if existing_decision==decision and existing_dispatch.is_file():
+            payload=json.loads(existing_dispatch.read_text(encoding="utf-8")); return {**payload,"dispatch_path":str(existing_dispatch),"idempotent":True}
+        raise PermissionError(f"finding already has decision {existing_decision}")
     account=pwd.getpwnam(user); db_path=f"{home}/completion/completion.db"
     created_at=datetime.now(timezone.utc).isoformat(timespec="seconds")
     authorization={"id":f"ROOT-{finding_id}-{int(datetime.now(timezone.utc).timestamp())}","actor":actor,"source":source,

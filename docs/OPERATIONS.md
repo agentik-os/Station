@@ -28,7 +28,7 @@ sudo station recovery approve PROFILE MISSION REQUIREMENT --actor gareth --sourc
 sudo station recovery oracle-pass PROFILE MISSION REPORT.json --actor completion-oracle
 ```
 
-The auditor runs daily inside each profile boundary. Root-owned approval files bind to the exact requirement digest. Root-owned Oracle verdicts bind to the complete ledger digest, including verified prompt archive bytes; any later prompt, requirement, artifact or evidence mutation invalidates stale trust. Discovery never authorizes execution.
+The auditor runs daily inside each profile boundary. Operator’s `/recap` command refreshes the current conversation audit, compares every archived prompt against requirements/artifacts/evidence, shows unfinished work and validates the Graph/Loop/Gauntlet/Oracle installation. `Relaunch Missing` is a staged owner action bound to that exact session and ledger; duplicate same-ledger relaunches are rejected. Root-owned approval files bind to the exact requirement digest. Root-owned Oracle verdicts bind to the complete ledger digest, including verified prompt archive bytes; any later prompt, requirement, artifact or evidence mutation invalidates stale trust. Discovery never authorizes execution.
 
 ## Backup and recovery
 

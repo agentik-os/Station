@@ -476,7 +476,7 @@ class CompletionStore:
         evidence = [dict(row) for row in self.db.execute("SELECT * FROM evidence WHERE mission_id=?", (mission_id,))]
         package = {
             "schema": "agk.recovery.v1", "finding_id": finding_id, "mission_id": mission_id,
-            "authorization": dict(authorization),
+            "authorization": dict(authorization), "ledger_sha256": self.ledger_digest(mission_id),
             "original_prompts": prompts, "requirements": requirements,
             "artifacts": artifacts, "evidence": evidence,
             "instruction": "Execute only unresolved/reopened requirement nodes; verify and return evidence.",

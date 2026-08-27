@@ -22,6 +22,8 @@ Do not default to glossy cards, glassmorphism, AI/crypto gradients, violet tech 
 - Selects for finite choices; buttons for Run, Refresh, Back, Close, approve, and cancel.
 - Modals only for genuinely free-form, non-secret arguments.
 - Never repeat the same question in prose, an embed, a modal, and native Hermes input UI.
+- Do not wrap ordinary replies in full-message Discord blockquotes (`>>>`).
+- Do not use colored accent rails as decoration; reserve color for a real state, risk, or action.
 - Re-check authorization on every component and modal callback.
 - Sensitive actions use ephemeral staged confirmation.
 - Typed commands are a compatibility fallback, not the primary UX.

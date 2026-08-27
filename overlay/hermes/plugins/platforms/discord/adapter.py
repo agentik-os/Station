@@ -3362,13 +3362,15 @@ class DiscordAdapter(BasePlatformAdapter):
                 plugin_names = set(); agentik_names = set()
             core_priority = {
                 "station-sessions": 0,
+                "recap": 0,
+                "station-recovery": 0,
                 "clear": 0,
                 "panel": 1,
                 "account": 2,
                 "model": 3,
             }
             core_names = {
-                "station-sessions", "help", "status", "new", "stop", "resume", "sessions", "model",
+                "station-sessions", "station-recovery", "recap", "help", "status", "new", "stop", "resume", "sessions", "model",
                 "sethome", "clear", "undo", "approve", "deny", "queue",
                 "background", "context", "skills", "mcp", "restart", "version", "account", "panel",
             }
@@ -7095,7 +7097,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # to preserve the slash UX for deployments that intentionally allow
         # everyone in the guild.
         if ui_only:
-            allowed_ui_commands = {"station-sessions", "panel", "settings", "clear"}
+            allowed_ui_commands = {"station-sessions", "station-recovery", "recap", "panel", "settings", "clear"}
             for registered in list(tree.get_commands()):
                 if getattr(registered, "name", "") not in allowed_ui_commands:
                     tree.remove_command(registered.name)

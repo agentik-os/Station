@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_station_manifest_pins_upstreams_and_product_boundary():
     manifest = yaml.safe_load((ROOT / "station.yaml").read_text())
     assert manifest["product"]["id"] == "station"
-    assert manifest["product"]["version"] == "0.2.1"
+    assert manifest["product"]["version"] == "0.3.0"
     for component in ("agk_tui", "hermes"):
         commit = manifest["components"][component]["commit"]
         assert re.fullmatch(r"[0-9a-f]{40}", commit)

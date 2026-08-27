@@ -36,4 +36,5 @@ def test_mission_context_redacts_secret_like_prompt(tmp_path):
     context=controller.safe_mission_context("FIND-1234567890abcdef")
     assert "super-secret-value" not in context
     assert "hidden-value" not in context
+    assert module._safe_discord_text("postgres://admin:privatepass@db.internal/app", "WITHHELD") == "WITHHELD"
     assert "withheld from Discord" in context

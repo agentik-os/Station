@@ -117,7 +117,7 @@ sudo station recovery decide FINDING-ID RELAUNCH --actor gareth --source discord
 sudo station recovery oracle-pass operator MISS-ID /home/operator/.hermes/reports/completion-oracle/MISS-ID.json --actor completion-oracle
 ```
 
-Discord exposes `/station-recovery` on Operator with Refresh/Close and explicit `Relaunch Mission`, `Keep Backlog`, `Already Done` and `Ignore` controls. Viewing a report never authorizes execution. Human approvals are root-owned and bound to the exact requirement digest; Completion Oracle verdicts are root-owned and bound to the exact full-ledger digest, so later edits invalidate stale trust automatically.
+Discord exposes `/recap` on Operator to audit the current conversation against every archived prompt, requirement, artifact, evidence, Gauntlet and Completion Oracle gate. Its `Relaunch Missing` button creates an explicit owner authorization and reinjects the recovery instruction into the same Discord/Hermes session. `/station-recovery` remains the fleet recovery center with `Keep Backlog`, `Already Done`, `Ignore`, Refresh and Close. Viewing either report never authorizes execution. Human approvals are root-owned and bound to the exact requirement digest; Completion Oracle verdicts are root-owned and bound to the exact full-ledger digest, so later edits invalidate stale trust automatically.
 
 ## Lifecycle
 
