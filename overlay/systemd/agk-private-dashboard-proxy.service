@@ -1,0 +1,26 @@
+[Unit]
+Description=AGK PRIVATE dashboard loopback Host-rewrite proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=operator
+Group=operator
+ExecStart=/opt/agk-terminal/hermes-agent/venv/bin/python /usr/local/lib/agk-terminal/scripts/station_loopback_host_proxy.py --listen-host 127.0.0.1 --listen-port 8464 --upstream http://127.0.0.1:8463 --upstream-host 127.0.0.1:8463
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

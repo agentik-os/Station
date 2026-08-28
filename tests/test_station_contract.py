@@ -32,7 +32,10 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     assert "install-hermes-fleet-dashboard.sh" in bootstrap
     assert "completion_harness.py" in (ROOT / "overlay" / "install.sh").read_text()
     assert "agk-recovery-auditor.timer" in (ROOT / "overlay" / "install.sh").read_text()
-    assert "agk_discord_ui_policy" in (ROOT / "overlay" / "install.sh").read_text()
+    overlay_install = (ROOT / "overlay" / "install.sh").read_text()
+    assert "agk_discord_ui_policy" in overlay_install
+    assert "station_loopback_host_proxy.py" in overlay_install
+    assert "agk-private-dashboard-proxy.service" in overlay_install
     shared=(ROOT / "overlay" / "scripts" / "install-shared-hermes.sh").read_text()
     assert "DISCORD_ALLOW_BOTS=mentions" in shared
     assert "DISCORD_BOTS_REQUIRE_INLINE_MENTION=true" in shared

@@ -208,6 +208,8 @@ install -m 0755 "$repo_root/scripts/configure-station-discord-interagent.py" \
   "$install_root/scripts/configure-station-discord-interagent.py"
 install -m 0755 "$repo_root/scripts/station_safe_gateway_reload.py" \
   "$install_root/scripts/station_safe_gateway_reload.py"
+install -m 0755 "$repo_root/scripts/station_loopback_host_proxy.py" \
+  "$install_root/scripts/station_loopback_host_proxy.py"
 install -m 0755 "$repo_root/scripts/tailnet_secure_input.py" \
   "$install_root/scripts/tailnet_secure_input.py"
 install -m 0755 "$repo_root/scripts/topology.py" "$install_root/scripts/topology.py"
@@ -314,6 +316,8 @@ if [ "$system_install" = true ]; then
     /etc/systemd/system/agk-recovery-auditor.timer
   install -m 0644 "$repo_root/systemd/agk-interagent-broker.service" \
     /etc/systemd/system/agk-interagent-broker.service
+  install -m 0644 "$repo_root/systemd/agk-private-dashboard-proxy.service" \
+    /etc/systemd/system/agk-private-dashboard-proxy.service
   install -d -m 0755 /var/lib/agk-terminal
   install -d -m 0750 -o root -g operator /var/lib/agk-terminal/fleet
   install -d -m 0711 -o root -g root /var/lib/station/recovery
