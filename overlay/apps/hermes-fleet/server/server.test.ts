@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  configuredListenTarget,
   createFleetServer,
   isMainModule,
   parseAllowedHosts,
@@ -76,6 +77,15 @@ async function httpGet(
 }
 
 describe("Fleet request boundaries", () => {
+  it("prefers an absolute permissioned Unix socket over loopback TCP", () => {
+    expect(configuredListenTarget(" /run/user/1000/hermes-fleet.sock ", "8459"))
+      .toBe("/run/user/1000/hermes-fleet.sock");
+    expect(configuredListenTarget(undefined, "8459")).toBe(8459);
+    expect(() => configuredListenTarget("relative.sock", "8459")).toThrow(
+      "HERMES_FLEET_SOCKET must be an absolute path",
+    );
+  });
+
   it("recognizes the compiled entrypoint through an immutable release symlink", async () => {
     const temporary = await mkdtemp(join(tmpdir(), "hermes-fleet-entry-test-"));
     const releaseEntry = join(temporary, "release-server.js");
@@ -145,6 +155,7 @@ describe("Fleet request boundaries", () => {
     }));
     const fleet = createFleetServer({
       allowedHosts: ["fleet.test"],
+      operatorLogins: ["owner@example.com"],
       distDir: temporary,
       snapshotPath,
     });
@@ -153,6 +164,7 @@ describe("Fleet request boundaries", () => {
     try {
       const operator = await httpGet(port, "/api/fleet-snapshot?org=operator", {
         host: "fleet.test",
+        "tailscale-user-login": "owner@example.com",
       });
       expect(operator.status).toBe(200);
       expect(Object.keys(JSON.parse(operator.body).organisations)).toEqual([
@@ -179,6 +191,39 @@ describe("Fleet request boundaries", () => {
     }
   });
 
+  it("denies the global Operator snapshot without the owner identity", async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "hermes-fleet-owner-test-"));
+    const snapshotPath = join(temporary, "fleet-snapshot.json");
+    await writeFile(snapshotPath, JSON.stringify({
+      schema: "agk.fleet.v1",
+      generated_at: 100,
+      organisations: { operator: { id: "operator" } },
+    }));
+    const fleet = createFleetServer({
+      allowedHosts: ["fleet.test"],
+      operatorLogins: ["owner@example.com"],
+      distDir: temporary,
+      snapshotPath,
+    });
+    const port = await listen(fleet);
+
+    try {
+      const denied = await httpGet(port, "/api/fleet-snapshot?org=operator", {
+        host: "fleet.test",
+      });
+      expect(denied.status).toBe(403);
+
+      const wrongOwner = await httpGet(port, "/api/fleet-snapshot?org=operator", {
+        host: "fleet.test",
+        "tailscale-user-login": "other@example.com",
+      });
+      expect(wrongOwner.status).toBe(403);
+    } finally {
+      await close(fleet);
+      await rm(temporary, { recursive: true });
+    }
+  });
+
   it("rejects a foreign browser Origin even when Host is allowed", async () => {
     const fleet = createFleetServer({ allowedHosts: ["fleet.test"] });
     const port = await listen(fleet);
@@ -196,6 +241,13 @@ describe("Fleet request boundaries", () => {
         origin: "http://localhost",
       });
       expect(mismatchedAllowedOrigin.status).toBe(403);
+
+      const tailscaleProxyOrigin = await httpGet(port, "/healthz", {
+        host: "localhost",
+        origin: "https://fleet.test",
+        "tailscale-user-login": "owner@example.com",
+      });
+      expect(tailscaleProxyOrigin.status).toBe(200);
     } finally {
       await close(fleet);
     }

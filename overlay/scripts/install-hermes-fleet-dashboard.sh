@@ -15,9 +15,10 @@ usage() {
 usage: install-hermes-fleet-dashboard.sh [--source-root PATH]
 
 Build and install the AGK Hermes Fleet switcher, run one loopback-only Hermes
-dashboard per AGK profile, and publish the central switcher through Tailscale
-Serve on HTTPS 443. This command must run as root. Internet publication is
-intentionally outside this installer's scope.
+dashboard per AGK profile, bind Fleet to an operator-only Unix socket, and
+publish the central switcher through Tailscale Serve on HTTPS 443. This command
+must run as root. Internet publication is intentionally outside this installer's
+scope.
 EOF
 }
 
@@ -177,6 +178,10 @@ validate_fleet_service_target() {
       echo "refusing unexpected Hermes Fleet service port" >&2
       return 1
     }
+    grep -qx 'Environment=HERMES_FLEET_SOCKET=%t/hermes-fleet.sock' "$unit" || {
+      echo "refusing unexpected Hermes Fleet socket" >&2
+      return 1
+    }
   fi
 }
 
@@ -193,7 +198,8 @@ with open(path, encoding="utf-8") as handle:
 if config.get("AllowFunnel"):
     raise SystemExit("refusing to modify Serve while Funnel is enabled")
 
-central_target = "http://127.0.0.1:8459"
+central_target = "unix:/run/user/1000/hermes-fleet.sock"
+accepted_central_targets = {central_target, "http://127.0.0.1:8459"}
 legacy_targets = {
     "8460": "http://127.0.0.1:8460",
     "8461": "http://127.0.0.1:8461",
@@ -213,7 +219,7 @@ if phase == "before":
         raise SystemExit("refusing conflicting non-web Serve target on port 443")
     for value in central:
         encoded = json.dumps(value, sort_keys=True)
-        if central_target not in encoded and fleet_path not in encoded:
+        if not any(target in encoded for target in accepted_central_targets) and fleet_path not in encoded:
             raise SystemExit("refusing conflicting Serve target on HTTPS 443")
     for port, target in legacy_targets.items():
         routes = matches(port)
@@ -458,29 +464,25 @@ sudo -u operator env \
   DBUS_SESSION_BUS_ADDRESS="unix:path=$operator_runtime/bus" \
   systemctl --user restart hermes-fleet.service
 
-expected_fleet_address=127.0.0.1:8459
-fleet_listener=
+fleet_socket=$operator_runtime/hermes-fleet.sock
 for _ in $(seq 1 20); do
-  fleet_listener=$(ss -H -ltn | awk -v address="$expected_fleet_address" \
-    '$4 == address {print $4; exit}')
-  [ -n "$fleet_listener" ] && break
+  [ -S "$fleet_socket" ] && break
   sleep 1
 done
-[ "$fleet_listener" = "$expected_fleet_address" ] || {
-  echo "Hermes Fleet is not listening on loopback port 8459" >&2
+[ -S "$fleet_socket" ] || {
+  echo "Hermes Fleet Unix socket is unavailable" >&2
   exit 1
 }
-if ss -H -ltn | awk \
-  '$4 == "0.0.0.0:8459" || $4 == "*:8459" || $4 == "[::]:8459" { found = 1 } END { exit !found }'; then
-  echo "Hermes Fleet has a wildcard listener on port 8459" >&2
+[ "$(stat -c '%a:%U:%G' "$fleet_socket")" = "600:operator:$operator_group" ] || {
+  echo "Hermes Fleet Unix socket permissions are unsafe" >&2
   exit 1
-fi
+}
 
 for route in / /operator/ /agentik/ /mission/ /private/; do
   status_code=
   for _ in $(seq 1 20); do
     status_code=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
-      "http://127.0.0.1:8459$route" || true)
+      --unix-socket "$fleet_socket" "http://localhost$route" || true)
     [ "$status_code" = 200 ] && break
     sleep 1
   done
@@ -490,7 +492,7 @@ for route in / /operator/ /agentik/ /mission/ /private/; do
   }
 done
 
-tailscale serve --bg --yes --https=443 "http://127.0.0.1:8459"
+tailscale serve --bg --yes --https=443 "unix:$fleet_socket"
 for port in $legacy_ports; do
   tailscale serve --yes --https="$port" off
 done

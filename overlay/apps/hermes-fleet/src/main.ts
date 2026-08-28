@@ -22,7 +22,11 @@ import {
   renderStationOverview,
   type FleetView,
 } from "./views";
-import { renderTargetFor, type FleetRenderReason } from "./refresh-policy";
+import {
+  acceptRefreshResult,
+  renderTargetFor,
+  type FleetRenderReason,
+} from "./refresh-policy";
 
 const appElement = document.querySelector<HTMLDivElement>("#app");
 if (!appElement) throw new Error("Application root is missing");
@@ -44,6 +48,8 @@ let activeId = resolveOrganisationId(
 let activeView: FleetView = "overview";
 let snapshot: FleetSnapshot | null = null;
 let refreshTimer: number | null = null;
+let refreshController: AbortController | null = null;
+let refreshGeneration = 0;
 let loading = true;
 let errorMessage = "";
 
@@ -126,6 +132,13 @@ function renderContent(): void {
   });
 }
 
+function renderStatus(): void {
+  app.querySelector<HTMLElement>("[data-freshness]")!.textContent = errorMessage
+    ? "Synchronisation dégradée"
+    : "Synchronisé";
+  app.querySelector("[data-refresh]")?.classList.remove("is-spinning");
+}
+
 function selectView(view: FleetView): void {
   activeView = view;
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-view]")) {
@@ -167,17 +180,29 @@ function renderShell(): void {
 }
 
 async function refreshSnapshot(reason: FleetRenderReason): Promise<void> {
+  const generation = ++refreshGeneration;
+  const requestedOrganisation = activeId;
+  refreshController?.abort();
+  const controller = new AbortController();
+  refreshController = controller;
   loading = true;
   errorMessage = "";
   app.querySelector("[data-refresh]")?.classList.add("is-spinning");
   try {
-    snapshot = await fetchFleetSnapshot(activeId);
+    const nextSnapshot = await fetchFleetSnapshot(requestedOrganisation, controller.signal);
+    if (!acceptRefreshResult(generation, refreshGeneration, requestedOrganisation, activeId)) return;
+    snapshot = nextSnapshot;
   } catch (error) {
+    if (controller.signal.aborted || generation !== refreshGeneration) return;
     errorMessage = error instanceof Error ? error.message : String(error);
   } finally {
+    if (!acceptRefreshResult(generation, refreshGeneration, requestedOrganisation, activeId)) return;
+    if (refreshController === controller) refreshController = null;
     loading = false;
-    if (renderTargetFor(reason) === "shell") renderShell();
-    else renderContent();
+    const target = renderTargetFor(reason, activeView === "hermes");
+    if (target === "shell") renderShell();
+    else if (target === "content") renderContent();
+    else renderStatus();
   }
 }
 

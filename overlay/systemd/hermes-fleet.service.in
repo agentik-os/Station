@@ -9,7 +9,9 @@ Type=simple
 Environment=HERMES_FLEET_DIST=@FLEET_ROOT@/dist
 Environment=HERMES_FLEET_HOST=127.0.0.1
 Environment=HERMES_FLEET_PORT=8459
+Environment=HERMES_FLEET_SOCKET=%t/hermes-fleet.sock
 Environment=HERMES_FLEET_ALLOWED_HOSTS=@ALLOWED_HOSTS@
+Environment=HERMES_FLEET_OPERATOR_LOGINS=x@agentik-os.com
 Environment=HERMES_FLEET_SNAPSHOT=/var/lib/agk-terminal/fleet/fleet-snapshot.json
 ExecStart=/usr/bin/node @FLEET_ROOT@/server-dist/server.js
 WorkingDirectory=@FLEET_ROOT@

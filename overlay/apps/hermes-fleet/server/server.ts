@@ -1,4 +1,4 @@
-import { createReadStream, realpathSync } from "node:fs";
+import { chmodSync, createReadStream, realpathSync, unlinkSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, request as createUpstreamRequest } from "node:http";
 import type {
@@ -67,6 +67,7 @@ export interface FleetServerOptions {
   upstreamPorts?: Partial<Record<OrganisationId, number>>;
   onProxyError?: (error: Error, target: OrganisationId) => void;
   snapshotPath?: string;
+  operatorLogins?: readonly string[] | string;
 }
 
 interface RequestAuthorization {
@@ -136,10 +137,14 @@ function authorizeRequest(
   const origin = request.headers.origin;
   if (origin) {
     const hostnameFromOrigin = originHostname(origin);
+    const tailscaleProxyOriginAllowed =
+      Boolean(request.headers["tailscale-user-login"]) &&
+      LOOPBACK_HOSTS.includes(hostname as (typeof LOOPBACK_HOSTS)[number]) &&
+      Boolean(hostnameFromOrigin && allowedHosts.has(hostnameFromOrigin));
     if (
       !hostnameFromOrigin ||
       !allowedHosts.has(hostnameFromOrigin) ||
-      hostnameFromOrigin !== hostname
+      (hostnameFromOrigin !== hostname && !tailscaleProxyOriginAllowed)
     ) {
       return { allowed: false, status: 403, message: "Origin is not allowed" };
     }
@@ -319,13 +324,24 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
 }
 
 async function serveFleetSnapshot(
+  request: IncomingMessage,
   response: ServerResponse,
   snapshotPath: string,
   organisation: string | null,
+  operatorLogins: ReadonlySet<string>,
 ): Promise<void> {
   if (!isOrganisationId(organisation)) {
     sendJson(response, 400, { error: "Unknown organisation" });
     return;
+  }
+  if (organisation === "operator") {
+    const loginHeader = request.headers["tailscale-user-login"];
+    const login = (Array.isArray(loginHeader) ? loginHeader[0] : loginHeader)
+      ?.trim().toLowerCase();
+    if (!login || !operatorLogins.has(login)) {
+      sendJson(response, 403, { error: "Operator identity required" });
+      return;
+    }
   }
   try {
     const payload = JSON.parse(await readFile(snapshotPath, "utf8")) as FleetSnapshot;
@@ -534,6 +550,17 @@ function proxyWebSocket(
 export function createFleetServer(options: FleetServerOptions = {}): Server {
   const allowedHosts = parseAllowedHosts(options.allowedHosts);
   const upstreams = makeUpstreams(options.upstreamPorts);
+  const configuredOperatorLogins = options.operatorLogins;
+  const operatorLoginValues: readonly string[] = Array.isArray(configuredOperatorLogins)
+    ? configuredOperatorLogins
+    : typeof configuredOperatorLogins === "string"
+      ? configuredOperatorLogins.split(",")
+      : (process.env.HERMES_FLEET_OPERATOR_LOGINS ?? "").split(",");
+  const operatorLogins = new Set<string>(
+    operatorLoginValues
+      .map((login: string) => login.trim().toLowerCase())
+      .filter(Boolean),
+  );
   const distDir = resolve(
     options.distDir ??
       process.env.HERMES_FLEET_DIST ??
@@ -574,7 +601,13 @@ export function createFleetServer(options: FleetServerOptions = {}): Server {
         sendText(response, 405, "Method not allowed");
         return;
       }
-      void serveFleetSnapshot(response, snapshotPath, parsed.searchParams.get("org"));
+      void serveFleetSnapshot(
+        request,
+        response,
+        snapshotPath,
+        parsed.searchParams.get("org"),
+        operatorLogins,
+      );
       return;
     }
 
@@ -649,6 +682,20 @@ function configuredPort(value: string | undefined): number {
   return port;
 }
 
+export function configuredListenTarget(
+  socketValue: string | undefined,
+  portValue: string | undefined,
+): string | number {
+  const socketPath = socketValue?.trim();
+  if (socketPath) {
+    if (!socketPath.startsWith("/")) {
+      throw new Error("HERMES_FLEET_SOCKET must be an absolute path");
+    }
+    return socketPath;
+  }
+  return configuredPort(portValue);
+}
+
 export function isMainModule(
   entryPath: string | undefined,
   moduleUrl: string,
@@ -665,9 +712,29 @@ export function isMainModule(
 }
 
 if (isMainModule(process.argv[1], import.meta.url)) {
-  const port = configuredPort(process.env.HERMES_FLEET_PORT);
+  const target = configuredListenTarget(
+    process.env.HERMES_FLEET_SOCKET,
+    process.env.HERMES_FLEET_PORT,
+  );
   const server = createFleetServer();
-  server.listen(port, FLEET_LISTEN_HOST, () => {
-    console.info(`[hermes-fleet] listening on http://${FLEET_LISTEN_HOST}:${port}`);
-  });
+  const onListening = () => {
+    if (typeof target === "string") {
+      chmodSync(target, 0o600);
+      console.info(`[hermes-fleet] listening on unix:${target}`);
+    } else {
+      console.info(`[hermes-fleet] listening on http://${FLEET_LISTEN_HOST}:${target}`);
+    }
+  };
+  if (typeof target === "string") {
+    try {
+      unlinkSync(target);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+    server.listen(target, onListening);
+  } else {
+    server.listen(target, FLEET_LISTEN_HOST, onListening);
+  }
 }

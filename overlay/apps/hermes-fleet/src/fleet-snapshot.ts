@@ -135,10 +135,11 @@ export function scopeFleetSnapshot(
 
 export async function fetchFleetSnapshot(
   organisation: OrganisationId,
+  signal?: AbortSignal,
 ): Promise<FleetSnapshot> {
   const response = await fetch(
     `/api/fleet-snapshot?org=${encodeURIComponent(organisation)}`,
-    { headers: { accept: "application/json" }, cache: "no-store" },
+    { headers: { accept: "application/json" }, cache: "no-store", signal },
   );
   if (!response.ok) {
     throw new Error(`Fleet snapshot request failed (${response.status})`);

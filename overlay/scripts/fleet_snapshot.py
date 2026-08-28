@@ -99,8 +99,9 @@ def _boards(hermes: Path) -> tuple[str, list[dict[str, Any]], list[dict[str, Any
                 ))
                 required = {"id", "title", "status"}
                 if required.issubset(selected):
+                    order = "created_at" if "created_at" in columns else "id"
                     rows = connection.execute(
-                        f"SELECT {', '.join(selected)} FROM tasks ORDER BY created_at DESC LIMIT 300"
+                        f"SELECT {', '.join(selected)} FROM tasks ORDER BY {order} DESC LIMIT 300"
                     ).fetchall()
                     for row in rows:
                         status = _text(row["status"], 32).lower()
@@ -207,8 +208,9 @@ def _runtimes(home: Path, organisation: str) -> list[dict[str, Any]]:
         where = "environment = ?"
         if "archived_at" in columns:
             where += " AND archived_at IS NULL"
+        order = "last_activity" if "last_activity" in columns else "id"
         rows = connection.execute(
-            f"SELECT {', '.join(wanted)} FROM runtime_sessions WHERE {where} ORDER BY last_activity DESC LIMIT 80",
+            f"SELECT {', '.join(wanted)} FROM runtime_sessions WHERE {where} ORDER BY {order} DESC LIMIT 80",
             (organisation,),
         ).fetchall()
         result = []
