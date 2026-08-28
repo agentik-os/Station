@@ -20,3 +20,14 @@ def test_owner_policy_forbids_decorative_full_message_quote_rails():
 
     assert "Do not wrap ordinary replies in full-message Discord blockquotes (`>>>`)" in prompt
     assert "Do not use colored accent rails as decoration" in prompt
+
+
+def test_owner_questions_are_single_and_self_contained():
+    prompt = _policy_prompt().lower()
+
+    assert "sole visible question" in prompt
+    assert "context" in prompt
+    assert "decision" in prompt
+    assert "exact target" in prompt
+    assert "consequences" in prompt
+    assert "do not preface" in prompt
