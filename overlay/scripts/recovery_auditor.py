@@ -126,7 +126,7 @@ def _write_reports(store: CompletionStore, profile: str, reports_root: Path,
             ); store.db.commit(); continue
         requirement_ids = [row["id"] for row in (finding["unresolved"] or finding["requirements"])]
         existing = store.db.execute(
-            "SELECT 1 FROM findings WHERE mission_id=? AND classification=? AND human_decision IS NULL LIMIT 1",
+            "SELECT 1 FROM findings WHERE mission_id=? AND classification=? LIMIT 1",
             (finding["mission_id"], finding["classification"]),
         ).fetchone()
         if not existing:
