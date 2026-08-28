@@ -8394,9 +8394,14 @@ class DiscordAdapter(BasePlatformAdapter):
             prefix = f"{header}\n\n"
             suffix = tail
         truncated_suffix = "\n... [truncated]"
-        budget = max(0, self.MAX_MESSAGE_LENGTH - len(prefix) - len(suffix))
-        if len(body) > budget:
-            body = body[: max(0, budget - len(truncated_suffix))] + truncated_suffix
+        budget = max(
+            0,
+            self.MAX_MESSAGE_LENGTH - utf16_len(prefix) - utf16_len(suffix),
+        )
+        if utf16_len(body) > budget:
+            marker = _prefix_within_utf16_limit(truncated_suffix, budget)
+            body_budget = max(0, budget - utf16_len(marker))
+            body = _prefix_within_utf16_limit(body, body_budget) + marker
         return f"{prefix}{body}{suffix}"
 
     def _approval_mention_content(self) -> Optional[str]:
@@ -8577,7 +8582,7 @@ class DiscordAdapter(BasePlatformAdapter):
         via ``resolve_gateway_clarify(clarify_id, choice_text)``.
 
         Open-ended mode (``choices`` empty/None): renders the question as
-        plain embed text — no buttons. The gateway's text-intercept captures
+        plain content — no buttons. The gateway's text-intercept captures
         the next message in this session and resolves the clarify.
 
         Choice normalisation: ``choices`` may contain bare strings OR dicts
@@ -8598,18 +8603,6 @@ class DiscordAdapter(BasePlatformAdapter):
             channel = self._client.get_channel(int(target_id))
             if not channel:
                 channel = await self._client.fetch_channel(int(target_id))
-
-            # Discord embed description limit is 4096; trim conservatively.
-            max_desc = 4088
-            body = str(question or "").strip()
-            if len(body) > max_desc:
-                body = body[: max_desc - 3] + "..."
-
-            embed = discord.Embed(
-                title="❓ Hermes needs your input",
-                description=body,
-                color=discord.Color.orange(),
-            )
 
             # Normalise choices: LLMs sometimes emit `[{"description": "..."}]`
             # instead of bare strings, which would render as raw Python repr on
@@ -8648,11 +8641,6 @@ class DiscordAdapter(BasePlatformAdapter):
             clean_choices = clean_choices[:24]
 
             if clean_choices:
-                embed.add_field(
-                    name="Choices",
-                    value="Pick one below, or click ✏️ Other to type a custom answer.",
-                    inline=False,
-                )
                 view = ClarifyChoiceView(
                     choices=clean_choices,
                     clarify_id=clarify_id,
@@ -8660,15 +8648,11 @@ class DiscordAdapter(BasePlatformAdapter):
                     allowed_role_ids=self._allowed_role_ids,
                 )
             else:
-                embed.add_field(
-                    name="Reply",
-                    value="Reply in this channel with your answer.",
-                    inline=False,
-                )
                 view = None
 
-            # Mirror the question in plain content — embeds are invisible on
-            # some clients (see send_exec_approval).
+            # Clarify owns one self-contained visible surface. Rendering the
+            # same prompt in both content and an embed makes Discord clients
+            # show the question twice and separates it from its context.
             clarify_tail = (
                 "\n\nPick one below, or click ✏️ Other to type a custom answer."
                 if clean_choices
@@ -8678,7 +8662,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 "❓ **Hermes needs your input**", str(question or "").strip(),
                 tail=clarify_tail,
             )
-            msg = await channel.send(content=content, embed=embed, view=view) if view else await channel.send(content=content, embed=embed)
+            msg = await channel.send(content=content, view=view) if view else await channel.send(content=content)
             if view:
                 view._message = msg  # store for on_timeout expiration editing
             return SendResult(success=True, message_id=str(msg.id))
