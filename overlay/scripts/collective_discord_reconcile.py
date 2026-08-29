@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -29,13 +30,22 @@ def load_token() -> str:
 
 def request(method: str, path: str, token: str):
     headers = {"Authorization": "Bot " + token, "User-Agent": "DiscordBot (https://github.com/agentik-os, 1.0)"}
-    try:
-        with urllib.request.urlopen(urllib.request.Request(API + path, method=method, headers=headers), timeout=30) as response:
-            raw = response.read()
-            return json.loads(raw.decode() or "{}") if raw else {}
-    except urllib.error.HTTPError as error:
-        error.read()
-        raise RuntimeError(f"Discord {method} {path} failed HTTP {error.code}") from error
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(API + path, method=method, headers=headers), timeout=30) as response:
+                raw = response.read()
+                return json.loads(raw.decode() or "{}") if raw else {}
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode("utf-8", "replace")
+            if error.code == 429 and attempt < 7:
+                try:
+                    delay = float(json.loads(raw).get("retry_after", 1))
+                except Exception:
+                    delay = 1
+                time.sleep(min(max(delay, 0.1), 60))
+                continue
+            raise RuntimeError(f"Discord {method} {path} failed HTTP {error.code}") from error
+    raise RuntimeError("Discord command reconciliation retry budget exhausted")
 
 
 def reconcile(apply: bool) -> dict:
