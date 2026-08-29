@@ -30,7 +30,7 @@ TARGETS = {
     "agentik": Target("agentik", "/home/agentik/.hermes", "hermes-gateway.service"),
     "mission": Target("mission", "/home/mission/.hermes", "hermes-gateway.service"),
     "private": Target("private", "/home/private/.hermes", "hermes-gateway.service"),
-    "collective": Target("mission", "/home/mission/.hermes/profiles/collective", "hermes-gateway-collective.service"),
+    "collective": Target("agentik", "/home/agentik/.hermes/profiles/collective", "hermes-gateway-collective.service"),
     "nutrition-os": Target("operator", "/home/operator/.hermes/profiles/nutrition-os", "hermes-gateway-nutrition-os.service"),
 }
 

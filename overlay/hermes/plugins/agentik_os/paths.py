@@ -35,7 +35,7 @@ class PathResolver:
         return cls(environment=environment, home=Path.home())
 
     def client(self, slug: str) -> Path:
-        if self.environment not in {"mission", "collective"}:
+        if self.environment != "mission":
             raise PermissionError("clients belong to the Mission environment")
         return _contained(
             self.home / "workspace" / "clients",
@@ -44,11 +44,11 @@ class PathResolver:
 
     def project(self, slug: str, *, client_slug: str | None = None) -> Path:
         slug = normalize_slug(slug)
-        if self.environment in {"mission", "collective"}:
+        if self.environment == "mission":
             if not client_slug:
                 raise ValueError("open a client before creating a project")
             root = self.client(client_slug) / "projects"
-        elif self.environment == "agentik":
+        elif self.environment in {"agentik", "collective"}:
             root = self.home / "workspace" / "projects"
         elif self.environment == "private":
             root = self.home / "workspace" / "projects"

@@ -5,7 +5,7 @@ import argparse, importlib.util, json, os, pwd
 from pathlib import Path
 
 HARNESS_PATH=Path("/usr/local/lib/agk-terminal/scripts/completion_harness.py")
-PROFILES={"operator":("operator","/home/operator/.hermes"),"agentik":("agentik","/home/agentik/.hermes"),"mission":("mission","/home/mission/.hermes"),"private":("private","/home/private/.hermes"),"collective":("mission","/home/mission/.hermes/profiles/collective"),"nutrition-os":("operator","/home/operator/.hermes/profiles/nutrition-os")}
+PROFILES={"operator":("operator","/home/operator/.hermes"),"agentik":("agentik","/home/agentik/.hermes"),"mission":("mission","/home/mission/.hermes"),"private":("private","/home/private/.hermes"),"collective":("agentik","/home/agentik/.hermes/profiles/collective"),"nutrition-os":("operator","/home/operator/.hermes/profiles/nutrition-os")}
 
 def _module():
  spec=importlib.util.spec_from_file_location("station_approval_harness",HARNESS_PATH)

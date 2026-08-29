@@ -42,7 +42,7 @@ class AgentikCommandService:
                  os_registry_root: Path = Path("/opt/agentik/os-registry"),
                  os_assignment_path: Path | None = None):
         self.environment = environment
-        self.data_environment = "mission" if environment == "collective" else environment
+        self.data_environment = "agentik" if environment == "collective" else environment
         self.store = store
         self.resolver = resolver
         self.os_registry_root = os_registry_root
@@ -50,9 +50,9 @@ class AgentikCommandService:
         self.operator = OperatorCommandService() if environment == "operator" else None
         self.domain = DomainCommandService(environment, store)
         common = ["home", "active", "os"]
-        if environment in {"mission", "collective"}:
+        if environment == "mission":
             common += ["client", "project", "mission", "task", "run"]
-        elif environment in {"agentik", "private"}:
+        elif environment in {"agentik", "collective", "private"}:
             common += ["project", "mission", "task", "run"]
         elif environment == "operator":
             common += list(OPERATOR_COMMANDS)

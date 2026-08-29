@@ -50,7 +50,7 @@ class CompletionStore:
     def _infer_profile(root: Path) -> str:
         value = str(root.resolve())
         for profile, marker in (
-            ("collective", "/home/mission/.hermes/profiles/collective/"),
+            ("collective", "/home/agentik/.hermes/profiles/collective/"),
             ("nutrition-os", "/home/operator/.hermes/profiles/nutrition-os/"),
             ("operator", "/home/operator/.hermes/"),
             ("agentik", "/home/agentik/.hermes/"),

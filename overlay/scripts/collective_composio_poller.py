@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -34,12 +35,12 @@ DEALS_CHANNEL = "1541215608920612965"
 PRO_ROLE = "1541213916640841859"
 FREE_ROLE = "1541213914002489374"
 COMPOSIO = "/usr/local/bin/composio"
-COMPOSIO_ARTIFACT_ROOTS = (Path("/tmp/composio"), Path("/home/mission/.composio"))
+COMPOSIO_ARTIFACT_ROOTS = (Path("/tmp/composio"), Path("/home/agentik/.composio"))
 COMPOSIO_ARTIFACT_MAX_BYTES = 20 * 1024 * 1024
 
 
 def profile_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME") or "/home/mission/.hermes/profiles/collective")
+    return Path(os.environ.get("HERMES_HOME") or "/home/agentik/.hermes/profiles/collective")
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -122,14 +123,22 @@ def decode_composio_result(value: Any) -> Any:
             os.close(directory_fd)
 
 
+def composio_account(slug: str) -> str:
+    key = "AGK_COMPOSIO_STRIPE_ACCOUNT_ID" if slug.startswith("STRIPE_") else "AGK_COMPOSIO_TYPEFORM_ACCOUNT_ID" if slug.startswith("TYPEFORM_") else ""
+    value = os.environ.get(key, "") if key else ""
+    if not key or not re.fullmatch(r"ca_[A-Za-z0-9_-]{8,}", value):
+        raise RuntimeError(f"Explicit Agentik Composio account binding missing for {slug}")
+    return value
+
+
 def composio_execute(slug: str, data: dict[str, Any], timeout: int = 60) -> Any:
     result = subprocess.run(
-        [COMPOSIO, "execute", slug, "-d", json.dumps(data, separators=(",", ":"))],
+        [COMPOSIO, "execute", slug, "--account", composio_account(slug), "-d", json.dumps(data, separators=(",", ":"))],
         text=True,
         capture_output=True,
         check=False,
         timeout=timeout,
-        env={**os.environ, "HOME": "/home/mission"},
+        env={**os.environ, "HOME": "/home/agentik"},
     )
     if result.returncode:
         raise RuntimeError(f"Composio {slug} failed with exit code {result.returncode}")

@@ -43,7 +43,7 @@ CUSTOM_IDS = {
 
 def _enabled() -> bool:
     try:
-        return Path(os.environ.get("HERMES_HOME", "")).resolve() == Path("/home/mission/.hermes/profiles/collective")
+        return Path(os.environ.get("HERMES_HOME", "")).resolve() == Path("/home/agentik/.hermes/profiles/collective")
     except OSError:
         return False
 

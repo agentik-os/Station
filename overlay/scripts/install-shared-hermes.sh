@@ -190,6 +190,14 @@ for user_name in "${users[@]}"; do
   done < <(find "$unit_dir" -maxdepth 1 -type f -name 'hermes-*.service' -print0)
 done
 
+collective_home=/home/agentik/.hermes/profiles/collective
+if [ -d "$collective_home" ]; then
+  sudo -u agentik env HOME=/home/agentik HERMES_HOME="$collective_home" AGK_TERMINAL_ROOT="$install_root" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+    "$install_root/scripts/sync-hermes.sh"
+else
+  echo "Collective Agentik profile absent; explicit ownership provisioning/cutover required."
+fi
+
 for profile_env in /home/*/.hermes/profiles/*/.env; do
   [ -f "$profile_env" ] || continue
   owner=$(stat -c %U "$profile_env")
@@ -214,6 +222,9 @@ for user_name in "${users[@]}"; do
   unit_dir=$home_dir/.config/systemd/user
   while IFS= read -r -d '' unit; do
     unit_name=$(basename "$unit")
+    if [ "$user_name" = mission ] && [ "$unit_name" = hermes-gateway-collective.service ]; then
+      continue
+    fi
     if sudo -u "$user_name" env \
       XDG_RUNTIME_DIR="$runtime" \
       DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
@@ -238,15 +249,14 @@ for user_name in "${users[@]}"; do
   done
 done
 
-collective_home=/home/mission/.hermes/profiles/collective
-collective_units=/home/mission/.config/systemd/user
+collective_units=/home/agentik/.config/systemd/user
 if [ -d "$collective_home" ]; then
-  install -d -m 0755 -o mission -g "$(id -gn mission)" "$collective_units"
+  install -d -m 0755 -o agentik -g "$(id -gn agentik)" "$collective_units"
   collective_dropin="$collective_units/hermes-gateway-collective.service.d"
-  install -d -m 0755 -o mission -g "$(id -gn mission)" "$collective_dropin"
+  install -d -m 0755 -o agentik -g "$(id -gn agentik)" "$collective_dropin"
   printf '%s\n' '[Service]' 'Environment=DISCORD_MEMBERS_INTENT=1' \
     > "$collective_dropin/40-collective-membership.conf"
-  chown mission:"$(id -gn mission)" "$collective_dropin/40-collective-membership.conf"
+  chown agentik:"$(id -gn agentik)" "$collective_dropin/40-collective-membership.conf"
   chmod 0644 "$collective_dropin/40-collective-membership.conf"
   for unit in \
     agk-github-stars-forum.service \
@@ -256,51 +266,74 @@ if [ -d "$collective_home" ]; then
     agk-collective-news.service \
     agk-collective-news.timer
   do
-    install -m 0644 -o mission -g "$(id -gn mission)" \
+    install -m 0644 -o agentik -g "$(id -gn agentik)" \
       "$install_root/systemd/$unit" "$collective_units/$unit"
   done
-  [ -x /usr/local/bin/composio ] || {
-    echo "Composio CLI unavailable; Collective automations not activated" >&2
-    exit 1
-  }
-  sudo -u mission env HOME=/home/mission /usr/local/bin/composio whoami >/dev/null || {
-    echo "Mission Composio authentication unavailable; Collective automations not activated" >&2
-    exit 1
-  }
-  mission_uid=$(id -u mission)
-  loginctl enable-linger mission
-  systemctl start "user@$mission_uid.service"
+  collective_uid=$(id -u agentik)
+  loginctl enable-linger agentik
+  systemctl start "user@$collective_uid.service"
   for _ in $(seq 1 30); do
-    [ -S "/run/user/$mission_uid/bus" ] && break
+    [ -S "/run/user/$collective_uid/bus" ] && break
     sleep 1
   done
-  [ -S "/run/user/$mission_uid/bus" ] || {
-    echo "Mission user manager unavailable; GitHub Stars timer not installed" >&2
+  [ -S "/run/user/$collective_uid/bus" ] || {
+    echo "Agentik user manager unavailable; Collective units not installed" >&2
     exit 1
   }
-  sudo -u mission env \
-    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+  sudo -u agentik env \
+    XDG_RUNTIME_DIR="/run/user/$collective_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
     systemctl --user daemon-reload
-  for timer in agk-github-stars-forum.timer agk-collective-composio.timer agk-collective-news.timer; do
-    sudo -u mission env \
-      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-      systemctl --user enable --now "$timer"
-    sudo -u mission env \
-      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-      systemctl --user is-enabled --quiet "$timer"
-    sudo -u mission env \
-      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-      systemctl --user is-active --quiet "$timer"
-  done
-  # Keep the canonical Stars timer readback explicit for release-contract audits.
-  sudo -u mission env XDG_RUNTIME_DIR="/run/user/$mission_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-    systemctl --user is-enabled --quiet agk-github-stars-forum.timer
-  sudo -u mission env XDG_RUNTIME_DIR="/run/user/$mission_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-    systemctl --user is-active --quiet agk-github-stars-forum.timer
+  gateway_ready=true
+  grep -q '^DISCORD_BOT_TOKEN=' "$collective_home/.env" || gateway_ready=false
+  if [ "$gateway_ready" = true ]; then
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user is-active --quiet hermes-gateway-collective.service || gateway_ready=false
+  fi
+  composio_ready=$gateway_ready
+  bindings="$collective_home/composio-bindings.env"
+  [ -x /usr/local/bin/composio ] || composio_ready=false
+  [ -f "$bindings" ] || composio_ready=false
+  if [ "$composio_ready" = true ]; then
+    grep -Eq '^AGK_COMPOSIO_STRIPE_ACCOUNT_ID=ca_[A-Za-z0-9_-]{8,}$' "$bindings" || composio_ready=false
+    grep -Eq '^AGK_COMPOSIO_TYPEFORM_ACCOUNT_ID=ca_[A-Za-z0-9_-]{8,}$' "$bindings" || composio_ready=false
+    sudo -u agentik env HOME=/home/agentik /usr/local/bin/composio whoami >/dev/null || composio_ready=false
+  fi
+  if [ "$gateway_ready" = true ]; then
+    for timer in agk-github-stars-forum.timer agk-collective-news.timer; do
+      sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+        systemctl --user enable --now "$timer"
+      sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+        systemctl --user is-enabled --quiet "$timer"
+      sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+        systemctl --user is-active --quiet "$timer"
+    done
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user is-enabled --quiet agk-github-stars-forum.timer
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user is-active --quiet agk-github-stars-forum.timer
+  else
+    for timer in agk-github-stars-forum.timer agk-collective-news.timer; do
+      sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+        systemctl --user disable --now "$timer" >/dev/null 2>&1 || true
+    done
+  fi
+  if [ "$composio_ready" = true ]; then
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user enable --now agk-collective-composio.timer
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user is-enabled --quiet agk-collective-composio.timer
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user is-active --quiet agk-collective-composio.timer
+  else
+    sudo -u agentik env XDG_RUNTIME_DIR="/run/user/$collective_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$collective_uid/bus" \
+      systemctl --user disable --now agk-collective-composio.timer >/dev/null 2>&1 || true
+  fi
+  if [ "$gateway_ready" != true ]; then
+    echo "Collective Agentik profile provisioned; credential cutover required before activation."
+  elif [ "$composio_ready" != true ]; then
+    echo "Collective gateway active; Agentik-specific Composio OAuth bindings required before Stripe/Typeform activation."
+  fi
 fi
 
 echo "Shared official Hermes installation completed. Recovery snapshot: $backup_dir"

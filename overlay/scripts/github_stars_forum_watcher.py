@@ -302,7 +302,7 @@ def main() -> int:
     parser.add_argument(
         "--profile-home",
         type=Path,
-        default=Path("/home/mission/.hermes/profiles/collective"),
+        default=Path("/home/agentik/.hermes/profiles/collective"),
     )
     args = parser.parse_args()
     profile_home = args.profile_home.resolve()

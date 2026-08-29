@@ -251,6 +251,8 @@ install -m 0755 "$repo_root/scripts/collective_news_digest.py" \
   "$install_root/scripts/collective_news_digest.py"
 install -m 0755 "$repo_root/scripts/collective_discord_reconcile.py" \
   "$install_root/scripts/collective_discord_reconcile.py"
+install -m 0755 "$repo_root/scripts/migrate_collective_owner.py" \
+  "$install_root/scripts/migrate_collective_owner.py"
 install -d -m 0755 "$install_root/systemd"
 install -m 0644 "$repo_root/systemd/agk-github-stars-forum.service" \
   "$install_root/systemd/agk-github-stars-forum.service"
