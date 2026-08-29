@@ -9,6 +9,7 @@ credentials, command payloads, filesystem paths, or private memories.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -818,7 +819,83 @@ def _apply_routing_request(request_fd: int, request_name: str, homes: dict[str, 
                 os.close(fd)
 
 
-def _launch_secure_input_request(request_fd: int, request_name: str, request_id: str, homes: dict[str, Path], owner_id: str, status_root: Path) -> None:
+def _package_checksum(package_root: Path) -> str:
+    digest = hashlib.sha256()
+    files = []
+    for path in sorted(package_root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("live OS package contains a symlink")
+        if path.is_file():
+            files.append(path)
+    if not files or len(files) > 500:
+        raise ValueError("live OS package has an invalid file count")
+    for path in files:
+        relative = path.relative_to(package_root).as_posix().encode()
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        content = path.read_bytes()
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
+def validate_live_os_package(registry_root: Path, organisation: str, os_id: str, version: str) -> None:
+    if organisation not in ORGANISATIONS or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", os_id):
+        raise ValueError("invalid live OS package identity")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+        raise ValueError("invalid live OS package version")
+    registry = registry_root.absolute()
+    if registry.is_symlink() or not registry.is_dir():
+        raise ValueError("live OS registry is unavailable")
+    index_path = registry / "state" / "index.json"
+    if index_path.is_symlink() or not index_path.is_file():
+        raise ValueError("live OS registry index is unavailable")
+    index_fd = os.open(index_path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        index_stat = os.fstat(index_fd)
+        if not stat.S_ISREG(index_stat.st_mode) or index_stat.st_mode & 0o022:
+            raise ValueError("live OS registry index is unsafe")
+        with os.fdopen(os.dup(index_fd), "r", encoding="utf-8") as stream:
+            document = json.load(stream)
+    finally:
+        os.close(index_fd)
+    packages = document.get("packages") if isinstance(document, dict) else None
+    if not isinstance(packages, list):
+        raise ValueError("live OS registry index is invalid")
+    entry = next((item for item in packages if isinstance(item, dict) and item.get("id") == os_id and item.get("version") == version), None)
+    if entry is None or entry.get("status") == "superseded":
+        raise ValueError("live OS package is not installed")
+    scopes = entry.get("scope")
+    if not isinstance(scopes, list) or not ({"global", organisation} & set(scopes)):
+        raise ValueError("live OS package scope does not include this station")
+    package_root = registry / "packages" / os_id / version
+    yaml_manifest = package_root / "manifest.yaml"
+    json_manifest = package_root / "MANIFEST.json"
+    manifest_path = yaml_manifest if yaml_manifest.is_file() else json_manifest
+    if package_root.is_symlink() or not package_root.is_dir() or manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("live OS package files are unavailable")
+    if manifest_path.suffix == ".json":
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    manifest_scopes = manifest.get("scope") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("id") != os_id
+        or manifest.get("version") != version
+        or manifest.get("status", "active") == "superseded"
+        or not isinstance(manifest_scopes, list)
+        or not ({"global", organisation} & set(manifest_scopes))
+    ):
+        raise ValueError("live OS package manifest does not match the station")
+    indexed_checksum = str(entry.get("checksum") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", indexed_checksum):
+        raise ValueError("live OS package registry checksum is invalid")
+    if indexed_checksum != _package_checksum(package_root):
+        raise ValueError("live OS package checksum does not match the registry")
+
+
+def _launch_secure_input_request(request_fd: int, request_name: str, request_id: str, homes: dict[str, Path], owner_id: str, status_root: Path, registry_root: Path) -> None:
     raw = _read_request_payload(request_fd, request_name, homes["operator"].stat().st_uid)
     if raw.get("schema") != "agk.agent-discord-secure-input.v1":
         raise ValueError("invalid secure input request schema")
@@ -833,8 +910,9 @@ def _launch_secure_input_request(request_fd: int, request_name: str, request_id:
         raise ValueError("invalid secure input target")
     if any(not re.fullmatch(r"\d{17,20}", value) for value in (application_id, channel_id, guild_id)) or str(raw.get("owner_id") or "") != owner_id:
         raise ValueError("invalid secure input identity")
-    if expected_os_id != profile or not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", expected_os_version):
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", expected_os_id) or not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", expected_os_version):
         raise ValueError("invalid secure input OS identity")
+    validate_live_os_package(registry_root, organisation, expected_os_id, expected_os_version)
     home = homes[organisation]
     profile_home = home / ".hermes" / "profiles" / profile
     if not profile_home.is_dir() or profile_home.is_symlink():
@@ -889,7 +967,7 @@ def _launch_secure_input_request(request_fd: int, request_name: str, request_id:
     subprocess.run(command, check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def process_routing_requests(request_dir: Path, homes: dict[str, Path], owner_id: str, status_root: Path | None = None) -> tuple[int, int]:
+def process_routing_requests(request_dir: Path, homes: dict[str, Path], owner_id: str, status_root: Path | None = None, registry_root: Path = Path("/opt/agentik/os-registry")) -> tuple[int, int]:
     try:
         request_fd = os.open(request_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:
@@ -903,7 +981,7 @@ def process_routing_requests(request_dir: Path, homes: dict[str, Path], owner_id
                 if raw.get("schema") == "agk.agent-discord-routing.v1":
                     _apply_routing_request(request_fd, name, homes, owner_id)
                 elif raw.get("schema") == "agk.agent-discord-secure-input.v1" and status_root is not None:
-                    _launch_secure_input_request(request_fd, name, name.removesuffix(".json"), homes, owner_id, status_root)
+                    _launch_secure_input_request(request_fd, name, name.removesuffix(".json"), homes, owner_id, status_root, registry_root)
                 else:
                     raise ValueError("unsupported Fleet request schema")
                 os.unlink(name, dir_fd=request_fd)
@@ -945,7 +1023,7 @@ def main() -> int:
     parser.add_argument("--secure-status", default="/var/lib/agk-terminal/fleet/secure-input")
     args = parser.parse_args()
     homes = {organisation: Path("/home") / organisation for organisation in ORGANISATIONS}
-    process_routing_requests(Path(args.routing_requests), homes, os.environ.get("AGK_DISCORD_OWNER_ID", "1441423462492016821"), Path(args.secure_status))
+    process_routing_requests(Path(args.routing_requests), homes, os.environ.get("AGK_DISCORD_OWNER_ID", "1441423462492016821"), Path(args.secure_status), Path(args.registry))
     snapshot = collect_snapshot(homes=homes, registry_root=Path(args.registry))
     atomic_write(Path(args.output), snapshot)
     print(f"AGK Fleet snapshot: {len(snapshot['organisations'])} station(s)")

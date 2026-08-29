@@ -212,6 +212,8 @@ install -m 0755 "$repo_root/scripts/station_loopback_host_proxy.py" \
   "$install_root/scripts/station_loopback_host_proxy.py"
 install -m 0755 "$repo_root/scripts/tailnet_secure_input.py" \
   "$install_root/scripts/tailnet_secure_input.py"
+install -m 0755 "$repo_root/scripts/install-discord-token.py" \
+  "$install_root/scripts/install-discord-token.py"
 install -m 0755 "$repo_root/scripts/topology.py" "$install_root/scripts/topology.py"
 install -m 0755 "$repo_root/scripts/composio_inventory.py" \
   "$install_root/scripts/composio_inventory.py"

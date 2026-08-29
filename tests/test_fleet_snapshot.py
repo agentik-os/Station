@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -245,14 +246,26 @@ def test_secure_input_request_launches_isolated_profile_session(tmp_path, monkey
         "schema": "agk.agent-discord-secure-input.v1", "organisation": "private",
         "profile": "agk-architect", "application_id": "1542135948475637861",
         "channel_id": "1542137541572956193", "guild_id": "1541131439599386644",
-        "owner_id": "1441423462492016821", "expected_os_id": "agk-architect",
-        "expected_os_version": "1.0.0",
+        "owner_id": "1441423462492016821", "expected_os_id": "builder-os",
+        "expected_os_version": "0.2.0",
     }))
+    registry = tmp_path / "registry"
+    package = registry / "packages" / "builder-os" / "0.2.0"
+    package.mkdir(parents=True)
+    (package / "manifest.yaml").write_text(
+        "id: builder-os\nversion: 0.2.0\nscope: [private]\nstatus: active\n"
+    )
+    (registry / "state").mkdir()
+    (registry / "state" / "index.json").write_text(json.dumps({
+        "schema_version": 1,
+        "packages": [{"id": "builder-os", "version": "0.2.0", "scope": ["private"], "status": "active", "checksum": module._package_checksum(package)}],
+    }))
+    (registry / "state" / "index.json").chmod(0o644)
     calls = []
     monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
     applied, failed = module.process_routing_requests(
         requests, {"private": fixture["home"], "operator": Path.home()},
-        "1441423462492016821", status,
+        "1441423462492016821", status, registry,
     )
     assert (applied, failed) == (1, 0)
     command = calls[0][0]
@@ -262,12 +275,50 @@ def test_secure_input_request_launches_isolated_profile_session(tmp_path, monkey
     assert "/usr/sbin/runuser" in rendered and '"private"' in rendered
     assert "--expected-application" in rendered
     assert "1542135948475637861" in rendered
+    assert "--profile-id" in rendered
+    assert "agk-architect" in rendered
     assert "--home-channel" in rendered
     assert "1542137541572956193" in rendered
-    assert "--profile-id" in rendered
     assert "--expected-os-id" in rendered
+    assert "builder-os" in rendered
     assert "--expected-os-version" in rendered
+    assert "0.2.0" in rendered
     assert not list(requests.glob("*.json"))
+
+
+def test_live_os_package_revalidation_rejects_stale_or_wrong_scope(tmp_path):
+    module = load_module()
+    registry = tmp_path / "registry"
+    package = registry / "packages" / "builder-os" / "0.2.0"
+    package.mkdir(parents=True)
+    (package / "manifest.yaml").write_text(
+        "id: builder-os\nversion: 0.2.0\nscope: [private]\nstatus: active\n"
+    )
+    json_package = registry / "packages" / "nutrition-os" / "1.1.0"
+    json_package.mkdir(parents=True)
+    (json_package / "MANIFEST.json").write_text(json.dumps({
+        "id": "nutrition-os", "version": "1.1.0", "scope": ["private"], "status": "beta",
+    }))
+    (registry / "state").mkdir()
+    index = registry / "state" / "index.json"
+    index.write_text(json.dumps({
+        "schema_version": 1,
+        "packages": [
+            {"id": "builder-os", "version": "0.2.0", "scope": ["private"], "status": "active", "checksum": module._package_checksum(package)},
+            {"id": "nutrition-os", "version": "1.1.0", "scope": ["private"], "status": "beta", "checksum": module._package_checksum(json_package)},
+        ],
+    }))
+    index.chmod(0o644)
+
+    module.validate_live_os_package(registry, "private", "builder-os", "0.2.0")
+    module.validate_live_os_package(registry, "private", "nutrition-os", "1.1.0")
+    (json_package / "payload.txt").write_text("tampered")
+    with pytest.raises(ValueError, match="checksum"):
+        module.validate_live_os_package(registry, "private", "nutrition-os", "1.1.0")
+    with pytest.raises(ValueError, match="live OS package"):
+        module.validate_live_os_package(registry, "private", "builder-os", "0.1.0")
+    with pytest.raises(ValueError, match="scope"):
+        module.validate_live_os_package(registry, "mission", "builder-os", "0.2.0")
 
 
 def test_schema_tolerant_collectors_do_not_require_optional_order_columns(tmp_path):

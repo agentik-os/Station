@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentDashboardRoute, agentDiscordRoute, agentManageRoute, agentSetupRoute } from "./agent-navigation.js";
+import { agentDashboardRoute, agentDiscordRoute, agentManageRoute, agentSetupRoute, agentSetupScope } from "./agent-navigation.js";
 
 describe("Fleet agent navigation", () => {
   it("opens the native Hermes profile builder inside the selected station", () => {
@@ -20,5 +20,13 @@ describe("Fleet agent navigation", () => {
   it("always scopes generic Hermes to the station default profile", () => {
     expect(agentDashboardRoute("private")).toBe("/private/?profile=default");
     expect(agentDashboardRoute("mission")).not.toContain("clientdentistry");
+  });
+
+  it("states the exact station, profile and OS prerequisite beside setup actions", () => {
+    expect(agentSetupScope("private", "nutrition-os")).toEqual({
+      station: "Private",
+      profile: "nutrition-os",
+      prerequisite: "Preuve OS requise avant Ready",
+    });
   });
 });

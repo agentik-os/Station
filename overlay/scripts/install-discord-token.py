@@ -150,7 +150,7 @@ def _validate_owned_systemd_tree(service_root: Path) -> Path:
     return root.resolve()
 
 
-def _validate_private_distribution(profile_root: Path, expected_os_id: str, expected_version: str) -> None:
+def _validate_private_distribution(profile_root: Path, profile_id: str, expected_os_id: str, expected_version: str) -> None:
     distribution = Path(profile_root) / "distribution.yaml"
     if distribution.is_symlink() or not distribution.is_file():
         raise ValueError("Private OS distribution is unavailable")
@@ -161,7 +161,7 @@ def _validate_private_distribution(profile_root: Path, expected_os_id: str, expe
     if (
         not isinstance(manifest, dict)
         or manifest.get("owner_environment") != "private"
-        or manifest.get("profile_id") != expected_os_id
+        or manifest.get("profile_id") != profile_id
         or manifest.get("os_id") != expected_os_id
         or str(manifest.get("version") or "") != str(expected_version)
     ):
@@ -771,9 +771,7 @@ def install_token(
     if profile_id is not None or home_channel is not None:
         if not profile_id or not home_channel or not expected_os_id or not expected_os_version:
             raise ValueError("profile, OS identity, version, and home channel are required together")
-        if profile_id != expected_os_id:
-            raise ValueError("profile and OS identity must match")
-        _validate_private_distribution(target.parent, expected_os_id, expected_os_version)
+        _validate_private_distribution(target.parent, profile_id, expected_os_id, expected_os_version)
         preflight(profile_root=target.parent, profile_id=profile_id)
     previous = _snapshot_file(target)
     current = previous.content.decode("utf-8").splitlines() if previous is not None else []

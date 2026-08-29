@@ -1,4 +1,16 @@
-import { dashboardPath, type OrganisationId } from "./organisations.js";
+import { dashboardPath, getOrganisation, type OrganisationId } from "./organisations.js";
+
+export function agentSetupScope(organisation: OrganisationId, profile: string): {
+  station: string;
+  profile: string;
+  prerequisite: string;
+} {
+  return {
+    station: getOrganisation(organisation).label,
+    profile,
+    prerequisite: "Preuve OS requise avant Ready",
+  };
+}
 
 export function agentDashboardRoute(
   organisation: OrganisationId,
