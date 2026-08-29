@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -81,11 +82,26 @@ def make_fixture(root: Path, org: str) -> dict[str, Path]:
         "display_name": "AGK Architect",
         "description": "Designs AGK systems",
     }))
-    (standalone / ".env").write_text("DISCORD_BOT_TOKEN=test-token\n")
+    (standalone / ".env").write_text(
+        "DISCORD_BOT_TOKEN=test-token\n"
+        "DISCORD_ALLOWED_USERS=1441423462492016821\n"
+        "DISCORD_ALLOWED_CHANNELS=1542137541572956193\n"
+        "DISCORD_FREE_RESPONSE_CHANNELS=1542137541572956193\n"
+        "DISCORD_HOME_CHANNEL=1542137541572956193\n"
+    )
     process_id = os.getpid()
+    process_stat = Path(f"/proc/{process_id}/stat").read_text()
+    process_start_time = int(process_stat[process_stat.rfind(")") + 2:].split()[19])
     (standalone / "gateway_state.json").write_text(json.dumps({
         "pid": process_id,
-        "platforms": {"discord": {"state": "connected", "writer_pid": process_id}},
+        "start_time": process_start_time,
+        "platforms": {"discord": {"state": "connected", "writer_pid": process_id, "writer_start_time": process_start_time}},
+    }))
+    (standalone / "discord-runtime-receipt.json").write_text(json.dumps({
+        "readiness": True,
+        "application_id": "1542135948475637861",
+        "home_channel": "1542137541572956193",
+        "e2e": {"exact_reply": True},
     }))
     unit_dir = home / ".config" / "systemd" / "user"
     unit_dir.mkdir(parents=True)
@@ -99,11 +115,18 @@ def test_snapshot_collects_only_bounded_operational_metadata(tmp_path):
     registry = tmp_path / "registry"
     package = registry / "packages" / "ops-os" / "1.0.0"
     package.mkdir(parents=True)
+    (registry / "packages" / "agk-architect" / "1.0.0").mkdir(parents=True)
     (registry / "state").mkdir()
     (registry / "state" / "index.json").write_text(json.dumps({"packages": [{
         "id": "ops-os", "name": "Ops OS", "version": "1.0.0",
         "description": "Operations", "scope": ["operator"],
         "agents": ["builder"], "skills": [], "workflows": [], "tools": [],
+        "commands": [], "knowledge": [], "evals": [], "dependencies": [],
+        "capabilities": [],
+    }, {
+        "id": "agk-architect", "name": "AGK Architect OS", "version": "1.0.0",
+        "description": "Architecture", "scope": ["operator"],
+        "agents": ["agk-architect"], "skills": [], "workflows": [], "tools": [],
         "commands": [], "knowledge": [], "evals": [], "dependencies": [],
         "capabilities": [],
     }]}))
@@ -126,6 +149,19 @@ def test_snapshot_collects_only_bounded_operational_metadata(tmp_path):
     assert architect["discord"]["status"] == "connected"
     assert architect["discord"]["service_installed"] is True
     assert architect["discord"]["token_configured"] is True
+    assert architect["discord"]["owner_locked"] is True
+    assert architect["discord"]["channel_id"] == "1542137541572956193"
+    assert architect["discord"]["channel_access"] is True
+    assert architect["discord"]["os_access"] is True
+    assert architect["discord"]["ready"] is True
+    shutil.rmtree(registry / "packages" / "agk-architect")
+    without_package = module.collect_snapshot(
+        homes={"operator": fixture["home"]}, registry_root=registry, now=201,
+    )
+    unproven = next(item for item in without_package["organisations"]["operator"]["agents"] if item["id"] == "agk-architect")
+    assert unproven["discord"]["e2e_verified"] is True
+    assert unproven["discord"]["os_access"] is False
+    assert unproven["discord"]["ready"] is False
     assert agents["builder"]["discord"]["status"] == "owner_required"
     (fixture["hermes"] / "profiles" / "agk-architect" / "gateway_state.json").write_text(json.dumps({
         "pid": 99999999,
@@ -141,6 +177,97 @@ def test_snapshot_collects_only_bounded_operational_metadata(tmp_path):
     encoded = json.dumps(snapshot)
     assert "private prompt content" not in encoded
     assert str(tmp_path) not in encoded
+
+
+def test_routing_request_locks_owner_and_channel_atomically(tmp_path):
+    module = load_module()
+    fixture = make_fixture(tmp_path, "private")
+    requests = tmp_path / "requests"
+    requests.mkdir()
+    (requests / "one.json").write_text(json.dumps({
+        "schema": "agk.agent-discord-routing.v1",
+        "organisation": "private",
+        "profile": "agk-architect",
+        "application_id": "1542135948475637861",
+        "channel_id": "1542137541572956193",
+        "owner_id": "1441423462492016821",
+    }))
+    applied, failed = module.process_routing_requests(
+        requests, {"private": fixture["home"], "operator": Path.home()}, "1441423462492016821",
+    )
+    assert (applied, failed) == (1, 0)
+    env = (fixture["hermes"] / "profiles" / "agk-architect" / ".env").read_text()
+    assert env.count("DISCORD_ALLOWED_USERS=1441423462492016821") == 1
+    assert env.count("DISCORD_ALLOWED_CHANNELS=1542137541572956193") == 1
+    assert env.count("DISCORD_FREE_RESPONSE_CHANNELS=1542137541572956193") == 1
+    assert env.count("DISCORD_HOME_CHANNEL=1542137541572956193") == 1
+    assert not list(requests.glob("*.json"))
+
+
+def test_routing_request_rolls_back_env_and_config_when_receipt_write_fails(tmp_path, monkeypatch):
+    module = load_module()
+    fixture = make_fixture(tmp_path, "private")
+    profile = fixture["hermes"] / "profiles" / "agk-architect"
+    env_before = (profile / ".env").read_bytes()
+    config_before = (profile / "config.yaml").read_bytes()
+    requests = tmp_path / "requests"
+    requests.mkdir()
+    (requests / "two.json").write_text(json.dumps({
+        "schema": "agk.agent-discord-routing.v1", "organisation": "private",
+        "profile": "agk-architect", "application_id": "1542135948475637861",
+        "channel_id": "1542137541572956193",
+        "owner_id": "1441423462492016821",
+    }))
+    real_write = module._write_at_atomic
+
+    def fail_receipt(directory_fd, name, content, mode, uid, gid):
+        if name == "discord-routing-receipt.json" and "agk.agent-discord-routing-receipt.v1" in content:
+            raise OSError("injected receipt failure")
+        return real_write(directory_fd, name, content, mode, uid, gid)
+
+    monkeypatch.setattr(module, "_write_at_atomic", fail_receipt)
+    applied, failed = module.process_routing_requests(
+        requests, {"private": fixture["home"], "operator": Path.home()}, "1441423462492016821",
+    )
+    assert (applied, failed) == (0, 1)
+    assert (profile / ".env").read_bytes() == env_before
+    assert (profile / "config.yaml").read_bytes() == config_before
+    assert not (profile / "discord-routing-receipt.json").exists()
+
+
+def test_secure_input_request_launches_isolated_profile_session(tmp_path, monkeypatch):
+    module = load_module()
+    fixture = make_fixture(tmp_path, "private")
+    requests = tmp_path / "requests"
+    status = tmp_path / "status"
+    requests.mkdir()
+    (requests / "secure.json").write_text(json.dumps({
+        "schema": "agk.agent-discord-secure-input.v1", "organisation": "private",
+        "profile": "agk-architect", "application_id": "1542135948475637861",
+        "channel_id": "1542137541572956193", "guild_id": "1541131439599386644",
+        "owner_id": "1441423462492016821", "expected_os_id": "agk-architect",
+        "expected_os_version": "1.0.0",
+    }))
+    calls = []
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+    applied, failed = module.process_routing_requests(
+        requests, {"private": fixture["home"], "operator": Path.home()},
+        "1441423462492016821", status,
+    )
+    assert (applied, failed) == (1, 0)
+    command = calls[0][0]
+    assert "/usr/bin/systemd-run" == command[0]
+    assert "--uid=root" in command
+    rendered = " ".join(command)
+    assert "/usr/sbin/runuser" in rendered and '"private"' in rendered
+    assert "--expected-application" in rendered
+    assert "1542135948475637861" in rendered
+    assert "--home-channel" in rendered
+    assert "1542137541572956193" in rendered
+    assert "--profile-id" in rendered
+    assert "--expected-os-id" in rendered
+    assert "--expected-os-version" in rendered
+    assert not list(requests.glob("*.json"))
 
 
 def test_schema_tolerant_collectors_do_not_require_optional_order_columns(tmp_path):

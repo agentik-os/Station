@@ -143,21 +143,24 @@ export function renderOperatingSystems(stations: FleetStation[], global: boolean
 export function renderAgents(stations: FleetStation[], global: boolean): string {
   const groups = stations.map((station) => {
     const cards = station.agents.map((agent) => {
-      const ready = Boolean(agent.ready);
       const name = textValue(agent, "name");
       const profile = textValue(agent, "profile") || "default";
       const discordState = recordValue(agent, "discord");
       const discordStatus = textValue(discordState, "status") || "profile_required";
       const dedicated = Boolean(discordState.dedicated) && profile !== "default";
-      const discordLabel = DISCORD_STATUS_LABELS[discordStatus] ?? discordStatus;
-      const discordClass = discordStatus === "connected" ? "is-ready" : discordStatus === "configured" ? "" : "is-warning";
+      const botReady = Boolean(discordState.ready);
+      const channelId = textValue(discordState, "channel_id");
+      const applicationId = textValue(discordState, "application_id");
+      const discordLabel = botReady ? "Prêt" : DISCORD_STATUS_LABELS[discordStatus] ?? discordStatus;
+      const discordClass = botReady || discordStatus === "connected" ? "is-ready" : discordStatus === "configured" ? "" : "is-warning";
       const manage = profile !== "default"
-        ? `<button type="button" class="agent-manage" data-agent-manage="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Gérer</button>`
+        ? `<button type="button" class="agent-secondary" data-agent-manage="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Profil</button>`
         : "";
       const discord = dedicated
-        ? `<button type="button" class="agent-discord" data-agent-discord="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Bot Discord</button>`
-        : `<button type="button" class="agent-discord" data-agent-bot-profile="${escapeHtml(textValue(agent, "id"))}" data-agent-organisation="${escapeHtml(station.id)}">Créer profil bot</button>`;
-      return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="health-dot ${ready ? "is-online" : "is-offline"}"></span></header><p>${escapeHtml(textValue(agent, "description"))}</p><footer>${stationBadge(station, global)}<span>${escapeHtml(profile)}</span><span class="state-pill ${discordClass}">${escapeHtml(discordLabel)}</span><code>v${escapeHtml(textValue(agent, "version"))}</code>${manage}${discord}</footer></article>`;
+        ? `<button type="button" class="agent-primary" data-agent-discord-configure="${escapeHtml(profile)}" data-agent-name="${escapeHtml(name)}" data-agent-application="${escapeHtml(applicationId)}" data-agent-channel="${escapeHtml(channelId)}" data-agent-organisation="${escapeHtml(station.id)}">Configurer</button><button type="button" class="agent-secondary" data-agent-discord="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Hermes</button>`
+        : `<button type="button" class="agent-primary" data-agent-bot-profile="${escapeHtml(textValue(agent, "id"))}" data-agent-organisation="${escapeHtml(station.id)}">Créer profil bot</button>`;
+      const evidence = dedicated ? `<dl class="agent-evidence"><div><dt>Propriétaire</dt><dd class="${Boolean(discordState.owner_locked) ? "is-ok" : "is-missing"}">${Boolean(discordState.owner_locked) ? "Gareth verrouillé" : "À verrouiller"}</dd></div><div><dt>Canal</dt><dd class="${Boolean(discordState.channel_access) ? "is-ok" : "is-missing"}">${channelId ? `Canal ${escapeHtml(channelId)}` : "ID requis"}</dd></div><div><dt>Accès OS</dt><dd class="${Boolean(discordState.os_access) ? "is-ok" : "is-missing"}">${Boolean(discordState.os_access) ? "OS vérifié" : "Preuve requise"}</dd></div></dl>` : "";
+      return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="state-pill ${discordClass}">${escapeHtml(discordLabel)}</span></header><p>${escapeHtml(textValue(agent, "description"))}</p>${evidence}<div class="agent-meta"><span>${escapeHtml(profile)}</span><code>${escapeHtml(textValue(discordState, "service") || `v${textValue(agent, "version")}`)}</code></div><footer>${manage}${discord}</footer></article>`;
     }).join("");
     return `<section class="agent-station" data-station="${escapeHtml(station.id)}"><header class="agent-station-header"><div><h2>${escapeHtml(station.id)}</h2><span>${station.agents.length} agent(s)</span></div><button type="button" class="setup-action" data-agent-setup="${escapeHtml(station.id)}">Nouvel agent</button></header><div class="agent-grid">${cards || emptyState("Aucun agent configuré pour cette station.")}</div></section>`;
   }).join("");

@@ -39,7 +39,7 @@ describe("Fleet views", () => {
   it("renders canonical agent names with setup and management controls", () => {
     const withAgents: FleetStation = {
       ...station,
-      agents: [{ id: "agk-architect", name: "AGK Architect", description: "Designs AGK systems", profile: "agk-architect", version: "profile", runtime: "hermes-profile", ready: true, discord: { dedicated: true, status: "connected", token_configured: true, service_installed: true, gateway_connected: true } }],
+      agents: [{ id: "agk-architect", name: "AGK Architect", description: "Designs AGK systems", profile: "agk-architect", version: "profile", runtime: "hermes-profile", ready: true, discord: { dedicated: true, status: "connected", token_configured: true, service_installed: true, gateway_connected: true, channel_id: "1542137541572956193", application_id: "1542135948475637861", owner_locked: true, channel_access: true, os_access: true, e2e_verified: true, ready: true } }],
     };
     const html = renderAgents([withAgents], false);
     expect(html).toContain("AGK Architect");
@@ -47,8 +47,12 @@ describe("Fleet views", () => {
     expect(html).toContain('data-agent-setup="agentik"');
     expect(html).toContain('data-agent-manage="agk-architect"');
     expect(html).toContain('data-agent-discord="agk-architect"');
-    expect(html).toContain("Bot Discord");
-    expect(html).toContain("Connecté");
+    expect(html).toContain("Configurer");
+    expect(html).toContain("Prêt");
+    expect(html).toContain("Canal 1542137541572956193");
+    expect(html).toContain("OS vérifié");
+    expect(html).toContain('data-agent-discord-configure="agk-architect"');
+    expect(html).toContain('data-agent-application="1542135948475637861"');
   });
 
   it("renders canonical session titles and profile names", () => {

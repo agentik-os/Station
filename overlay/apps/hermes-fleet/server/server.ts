@@ -1,5 +1,5 @@
 import { chmodSync, createReadStream, realpathSync, unlinkSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createServer, request as createUpstreamRequest } from "node:http";
 import type {
   IncomingHttpHeaders,
@@ -68,6 +68,11 @@ export interface FleetServerOptions {
   onProxyError?: (error: Error, target: OrganisationId) => void;
   snapshotPath?: string;
   operatorLogins?: readonly string[] | string;
+  discordOwnerId?: string;
+  routingRequestDir?: string;
+  allowMutationOverTcpForTests?: boolean;
+  secureStatusDir?: string;
+  discordGuildId?: string;
 }
 
 interface RequestAuthorization {
@@ -323,6 +328,96 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
   response.end(body);
 }
 
+function ownerLogin(request: IncomingMessage, operatorLogins: ReadonlySet<string>): boolean {
+  const header = request.headers["tailscale-user-login"];
+  const login = (Array.isArray(header) ? header[0] : header)?.trim().toLowerCase();
+  return Boolean(login && operatorLogins.has(login));
+}
+
+async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 16_384) throw new Error("Request body too large");
+    chunks.push(buffer);
+  }
+  const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("JSON object required");
+  return value as Record<string, unknown>;
+}
+
+async function queueRequest(requestDir: string, payload: Record<string, unknown>): Promise<string> {
+  await mkdir(requestDir, { recursive: true, mode: 0o700 });
+  const requestId = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2, 14)}`;
+  const temporary = resolve(requestDir, `.${requestId}.tmp`);
+  const target = resolve(requestDir, `${requestId}.json`);
+  await writeFile(temporary, JSON.stringify(payload) + "\n", { encoding: "utf8", mode: 0o600, flag: "wx" });
+  await rename(temporary, target);
+  return requestId;
+}
+
+async function setupAgentDiscord(request: IncomingMessage, response: ServerResponse, snapshotPath: string, requestDir: string, operatorLogins: ReadonlySet<string>, discordOwnerId: string): Promise<void> {
+  if (!ownerLogin(request, operatorLogins)) return sendJson(response, 403, { error: "Owner identity required" });
+  try {
+    const body = await readJsonBody(request);
+    const organisation = String(body.organisation ?? "");
+    const profile = String(body.profile ?? "");
+    const channelId = String(body.channel_id ?? "");
+    const applicationId = String(body.application_id ?? "");
+    if (!isOrganisationId(organisation) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(profile) || !/^\d{17,20}$/.test(channelId) || !/^\d{17,20}$/.test(applicationId)) return sendJson(response, 400, { error: "Valid organisation, profile, application ID and Discord channel ID required" });
+    if (!/^\d{17,20}$/.test(discordOwnerId)) return sendJson(response, 503, { error: "Discord owner ID is not configured" });
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as FleetSnapshot;
+    const station = snapshot.organisations[organisation];
+    if (!station?.agents?.some((agent) => agent.profile === profile)) return sendJson(response, 404, { error: "Agent profile is not registered in this station" });
+    const requestId = await queueRequest(requestDir, { schema: "agk.agent-discord-routing.v1", organisation, profile, application_id: applicationId, channel_id: channelId, owner_id: discordOwnerId });
+    sendJson(response, 200, { ok: true, queued: true, request_id: requestId, organisation, profile, application_id: applicationId, channel_id: channelId, owner_id: discordOwnerId, restart_required: true, ready: false });
+  } catch (error) {
+    console.error(`[hermes-fleet] Discord routing setup failed: ${error instanceof Error ? error.message : String(error)}`);
+    sendJson(response, 502, { error: "Discord routing setup failed safely" });
+  }
+}
+
+async function startAgentSecureInput(request: IncomingMessage, response: ServerResponse, snapshotPath: string, requestDir: string, operatorLogins: ReadonlySet<string>, discordOwnerId: string, discordGuildId: string): Promise<void> {
+  if (!ownerLogin(request, operatorLogins)) return sendJson(response, 403, { error: "Owner identity required" });
+  try {
+    const body = await readJsonBody(request);
+    const organisation = String(body.organisation ?? "");
+    const profile = String(body.profile ?? "");
+    const applicationId = String(body.application_id ?? "");
+    const channelId = String(body.channel_id ?? "");
+    if (!isOrganisationId(organisation) || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(profile) || !/^\d{17,20}$/.test(applicationId) || !/^\d{17,20}$/.test(channelId) || !/^\d{17,20}$/.test(discordGuildId)) return sendJson(response, 400, { error: "Valid station, profile, application, guild and channel required" });
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as FleetSnapshot;
+    const station = snapshot.organisations[organisation];
+    const agent = station?.agents?.find((candidate) => candidate.profile === profile);
+    if (!agent) return sendJson(response, 404, { error: "Agent profile is not registered in this station" });
+    const declaredOs = Array.isArray(agent.os) && agent.os.length ? String(agent.os[0]).split("@", 1)[0] : profile;
+    const operatingSystem = station?.os?.find((candidate) => candidate.id === declaredOs && candidate.installed === true);
+    const osVersion = typeof operatingSystem?.version === "string" ? operatingSystem.version : "";
+    if (!operatingSystem || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(osVersion)) return sendJson(response, 409, { error: "Installed OS package evidence required before bot onboarding" });
+    const requestId = await queueRequest(requestDir, { schema: "agk.agent-discord-secure-input.v1", organisation, profile, application_id: applicationId, channel_id: channelId, guild_id: discordGuildId, owner_id: discordOwnerId, expected_os_id: declaredOs, expected_os_version: osVersion });
+    sendJson(response, 200, { ok: true, queued: true, request_id: requestId, status: "starting" });
+  } catch (error) {
+    console.error(`[hermes-fleet] Secure Input launch failed: ${error instanceof Error ? error.message : String(error)}`);
+    sendJson(response, 502, { error: "Secure Input launch failed safely" });
+  }
+}
+
+async function serveSecureInputStatus(request: IncomingMessage, response: ServerResponse, statusDir: string, operatorLogins: ReadonlySet<string>, requestId: string | null): Promise<void> {
+  if (!ownerLogin(request, operatorLogins)) return sendJson(response, 403, { error: "Owner identity required" });
+  if (!requestId || !/^\d+-\d+-[0-9a-f]{1,24}$/.test(requestId)) return sendJson(response, 400, { error: "Invalid request ID" });
+  try {
+    const text = await readFile(resolve(statusDir, `${requestId}.jsonl`), "utf8");
+    const ready = text.split(/\r?\n/).map((line) => { try { return JSON.parse(line); } catch { return null; } }).find((row) => row?.status === "READY");
+    if (!ready || typeof ready.url !== "string" || !ready.url.startsWith("https://")) return sendJson(response, 202, { status: "starting" });
+    sendJson(response, 200, { status: "ready", url: ready.url, expires_in_seconds: ready.expires_in_seconds, transport: ready.transport });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return sendJson(response, 202, { status: "starting" });
+    sendJson(response, 503, { error: "Secure Input status unavailable" });
+  }
+}
+
 async function serveFleetSnapshot(
   request: IncomingMessage,
   response: ServerResponse,
@@ -569,6 +664,10 @@ export function createFleetServer(options: FleetServerOptions = {}): Server {
       process.env.HERMES_FLEET_SNAPSHOT ??
       "/var/lib/agk-terminal/fleet/fleet-snapshot.json",
   );
+  const discordOwnerId = options.discordOwnerId ?? process.env.HERMES_FLEET_DISCORD_OWNER_ID ?? "";
+  const routingRequestDir = resolve(options.routingRequestDir ?? process.env.HERMES_FLEET_ROUTING_REQUEST_DIR ?? "/run/user/1000/hermes-fleet-routing");
+  const secureStatusDir = resolve(options.secureStatusDir ?? process.env.HERMES_FLEET_SECURE_STATUS_DIR ?? "/var/lib/agk-terminal/fleet/secure-input");
+  const discordGuildId = options.discordGuildId ?? process.env.HERMES_FLEET_DISCORD_GUILD_ID ?? "";
   const onProxyError =
     options.onProxyError ??
     ((error: Error, target: OrganisationId) => {
@@ -606,6 +705,36 @@ export function createFleetServer(options: FleetServerOptions = {}): Server {
         parsed.searchParams.get("org"),
         operatorLogins,
       );
+      return;
+    }
+    if (parsed.pathname === "/api/agent-discord/setup") {
+      if (request.method !== "POST") {
+        sendText(response, 405, "Method not allowed");
+        return;
+      }
+      const trustedTransport = typeof server.address() === "string" || options.allowMutationOverTcpForTests === true;
+      if (!trustedTransport) {
+        sendJson(response, 403, { error: "Trusted Unix transport required" });
+        return;
+      }
+      void setupAgentDiscord(request, response, snapshotPath, routingRequestDir, operatorLogins, discordOwnerId);
+      return;
+    }
+    if (parsed.pathname === "/api/agent-discord/secure-input") {
+      const trustedTransport = typeof server.address() === "string" || options.allowMutationOverTcpForTests === true;
+      if (!trustedTransport) {
+        sendJson(response, 403, { error: "Trusted Unix transport required" });
+        return;
+      }
+      if (request.method === "POST") {
+        void startAgentSecureInput(request, response, snapshotPath, routingRequestDir, operatorLogins, discordOwnerId, discordGuildId);
+        return;
+      }
+      if (request.method === "GET") {
+        void serveSecureInputStatus(request, response, secureStatusDir, operatorLogins, parsed.searchParams.get("id"));
+        return;
+      }
+      sendText(response, 405, "Method not allowed");
       return;
     }
 

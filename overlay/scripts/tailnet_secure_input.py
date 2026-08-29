@@ -194,8 +194,10 @@ def main() -> int:
     ip, dns = _tailscale_identity(); route = secrets.token_urlsafe(32); csrf = secrets.token_urlsafe(32); state = RouteState(route, csrf, ttl_seconds=ttl)
     server = ThreadingHTTPServer((ip, 0), handler_factory(state, installer, "WireGuard-protected Tailnet transport")); port = server.server_address[1]
     lease = ServeLease("/" + route, f"http://{ip}:{port}/{route}", dns); url = None if args.no_serve else lease.open()
+    if not url and not args.no_serve:
+        server.server_close(); lease.close(); raise SystemExit("Tailnet HTTPS route unavailable")
     if not url: url = f"http://{ip}:{port}/{route}"
-    print(json.dumps({"status": "READY", "url": url, "expires_in_seconds": ttl, "transport": "tailscale-serve-https" if lease.active else "tailnet-wireguard-http"}))
+    print(json.dumps({"status": "READY", "url": url, "expires_in_seconds": ttl, "transport": "tailscale-serve-https" if lease.active else "tailnet-wireguard-http-test-only"}), flush=True)
     timer = threading.Timer(ttl, server.shutdown); timer.daemon = True; timer.start()
     try: server.serve_forever(poll_interval=.25)
     finally: timer.cancel(); server.server_close(); lease.close()

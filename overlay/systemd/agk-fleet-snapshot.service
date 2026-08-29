@@ -18,3 +18,5 @@ ReadOnlyPaths=/home/mission/.hermes /home/mission/.agentik
 ReadOnlyPaths=/home/private/.hermes /home/private/.agentik
 ReadOnlyPaths=/opt/agentik/os-registry
 ReadWritePaths=/var/lib/agk-terminal/fleet
+ReadWritePaths=/run/user/1000/hermes-fleet-routing
+ReadWritePaths=/home/operator/.hermes/profiles /home/agentik/.hermes/profiles /home/mission/.hermes/profiles /home/private/.hermes/profiles

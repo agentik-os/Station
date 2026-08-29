@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import {
   createServer,
   request as createRequest,
@@ -73,6 +73,27 @@ async function httpGet(
     );
     request.on("error", reject);
     request.end();
+  });
+}
+
+async function httpJson(
+  port: number,
+  path: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<HttpResult> {
+  return await new Promise<HttpResult>((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const request = createRequest({
+      host: "127.0.0.1", port, method: "POST", path,
+      headers: { ...headers, "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => resolve({ body: Buffer.concat(chunks).toString("utf8"), headers: response.headers, status: response.statusCode ?? 0 }));
+    });
+    request.on("error", reject);
+    request.end(payload);
   });
 }
 
@@ -227,6 +248,55 @@ describe("Fleet request boundaries", () => {
     } finally {
       await close(fleet);
       await rm(temporary, { recursive: true });
+    }
+  });
+
+  it("rejects spoofed owner headers over direct TCP mutation transport", async () => {
+    const fleet = createFleetServer({ allowedHosts: ["fleet.test"], operatorLogins: ["owner@example.com"], discordOwnerId: "1441423462492016821" });
+    const port = await listen(fleet);
+    try {
+      const result = await httpJson(port, "/api/agent-discord/setup", { organisation: "private", profile: "nutrition-os", application_id: "1542135948475637861", channel_id: "1542137541572956193" }, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(result.status).toBe(403);
+      expect(result.body).toContain("Trusted Unix transport required");
+    } finally { await close(fleet); }
+  });
+
+  it("locks per-agent Discord routing to Gareth and the exact dedicated channel", async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "hermes-fleet-discord-setup-"));
+    const snapshotPath = join(temporary, "fleet-snapshot.json");
+    const requestDir = join(temporary, "requests");
+    const secureStatusDir = join(temporary, "secure-status");
+    await writeFile(snapshotPath, JSON.stringify({ schema: "agk.fleet.v1", generated_at: 1, organisations: { private: { agents: [{ id: "nutrition-os", profile: "nutrition-os" }], os: [{ id: "nutrition-os", version: "1.1.0", installed: true }] } } }));
+    const fleet = createFleetServer({ allowedHosts: ["fleet.test"], operatorLogins: ["owner@example.com"], discordOwnerId: "1441423462492016821", discordGuildId: "1541131439599386644", routingRequestDir: requestDir, secureStatusDir, allowMutationOverTcpForTests: true, distDir: temporary, snapshotPath });
+    const port = await listen(fleet);
+    try {
+      const denied = await httpJson(port, "/api/agent-discord/setup", { organisation: "private", profile: "nutrition-os", application_id: "1542135948475637861", channel_id: "1542137541572956193" }, { host: "fleet.test" });
+      expect(denied.status).toBe(403);
+      const invalid = await httpJson(port, "/api/agent-discord/setup", { organisation: "private", profile: "nutrition-os", channel_id: "abc" }, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(invalid.status).toBe(400);
+      const configured = await httpJson(port, "/api/agent-discord/setup", { organisation: "private", profile: "nutrition-os", application_id: "1542135948475637861", channel_id: "1542137541572956193", allowed_user: "someone-else" }, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(configured.status).toBe(200);
+      const configuredPayload = JSON.parse(configured.body) as { request_id: string };
+      expect(configuredPayload).toMatchObject({ queued: true, owner_id: "1441423462492016821", channel_id: "1542137541572956193", restart_required: true });
+      const files = await readdir(requestDir);
+      expect(files).toHaveLength(1);
+      expect(JSON.parse(await readFile(join(requestDir, files[0]!), "utf8"))).toEqual({ schema: "agk.agent-discord-routing.v1", organisation: "private", profile: "nutrition-os", application_id: "1542135948475637861", channel_id: "1542137541572956193", owner_id: "1441423462492016821" });
+
+      const secure = await httpJson(port, "/api/agent-discord/secure-input", { organisation: "private", profile: "nutrition-os", application_id: "1542135948475637861", channel_id: "1542137541572956193" }, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(secure.status).toBe(200);
+      const securePayload = JSON.parse(secure.body) as { request_id: string };
+      expect(securePayload.request_id).toMatch(/^\d+-\d+-[0-9a-f]+$/);
+      const queued = JSON.parse(await readFile(join(requestDir, `${securePayload.request_id}.json`), "utf8"));
+      expect(queued).toMatchObject({ schema: "agk.agent-discord-secure-input.v1", application_id: "1542135948475637861", guild_id: "1541131439599386644", owner_id: "1441423462492016821" });
+      const pending = await httpGet(port, `/api/agent-discord/secure-input?id=${securePayload.request_id}`, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(pending.status).toBe(202);
+      await mkdir(secureStatusDir, { recursive: true });
+      await writeFile(join(secureStatusDir, `${securePayload.request_id}.jsonl`), JSON.stringify({ status: "READY", url: "https://agk-core.test.ts/secure-route", expires_in_seconds: 1800, transport: "tailscale-serve-https" }) + "\n");
+      const ready = await httpGet(port, `/api/agent-discord/secure-input?id=${securePayload.request_id}`, { host: "fleet.test", "tailscale-user-login": "owner@example.com" });
+      expect(ready.status).toBe(200);
+      expect(JSON.parse(ready.body)).toMatchObject({ status: "ready", url: "https://agk-core.test.ts/secure-route" });
+    } finally {
+      await close(fleet); await rm(temporary, { recursive: true });
     }
   });
 

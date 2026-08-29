@@ -1,5 +1,13 @@
 import { dashboardPath, type OrganisationId } from "./organisations.js";
 
+export function agentDashboardRoute(
+  organisation: OrganisationId,
+  profile = "default",
+): string {
+  const params = new URLSearchParams({ profile });
+  return `${dashboardPath(organisation)}?${params.toString()}`;
+}
+
 export function agentSetupRoute(organisation: OrganisationId): string {
   return `${dashboardPath(organisation)}profiles/new`;
 }

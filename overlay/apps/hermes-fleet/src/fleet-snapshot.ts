@@ -69,6 +69,13 @@ function safeDiscordState(agent: Record<string, unknown>): Record<string, unknow
     service_installed: Boolean(discord.service_installed),
     gateway_connected: Boolean(discord.gateway_connected),
     service: typeof discord.service === "string" ? discord.service : "",
+    channel_id: typeof discord.channel_id === "string" ? discord.channel_id : "",
+    application_id: typeof discord.application_id === "string" ? discord.application_id : "",
+    owner_locked: Boolean(discord.owner_locked),
+    channel_access: Boolean(discord.channel_access),
+    e2e_verified: Boolean(discord.e2e_verified),
+    os_access: Boolean(discord.os_access),
+    ready: Boolean(discord.ready),
   };
 }
 

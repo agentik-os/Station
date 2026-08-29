@@ -12,6 +12,9 @@ Environment=HERMES_FLEET_PORT=8459
 Environment=HERMES_FLEET_SOCKET=%t/hermes-fleet.sock
 Environment=HERMES_FLEET_ALLOWED_HOSTS=@ALLOWED_HOSTS@
 Environment=HERMES_FLEET_OPERATOR_LOGINS=x@agentik-os.com
+Environment=HERMES_FLEET_DISCORD_OWNER_ID=1441423462492016821
+Environment=HERMES_FLEET_DISCORD_GUILD_ID=1541131439599386644
+Environment=HERMES_FLEET_SECURE_STATUS_DIR=/var/lib/agk-terminal/fleet/secure-input
 Environment=HERMES_FLEET_SNAPSHOT=/var/lib/agk-terminal/fleet/fleet-snapshot.json
 ExecStart=/usr/bin/node @FLEET_ROOT@/server-dist/server.js
 WorkingDirectory=@FLEET_ROOT@
