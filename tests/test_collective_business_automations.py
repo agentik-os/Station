@@ -290,3 +290,5 @@ def test_command_reconciler_is_exact_and_fail_closed():
     assert 'REQUIRED_GLOBAL = {"collective", "panel", "clear"}' in script
     assert "Unknown guild commands require owner review" in script
     assert "--apply" in script
+    assert "retry_after" in script
+    assert "retry budget exhausted" in script
