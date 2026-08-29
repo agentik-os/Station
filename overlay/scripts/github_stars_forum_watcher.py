@@ -153,15 +153,15 @@ class Api:
 
     def list_stars(self) -> list[dict]:
         stars = []
-        for page in range(1, 50):
+        for page in range(1, 51):
             batch = self.request_json(
                 "GET",
                 f"https://api.github.com/users/{GITHUB_ACCOUNT}/starred?per_page=100&page={page}",
             )
             stars.extend(batch)
             if len(batch) < 100:
-                break
-        return stars
+                return stars
+        raise RuntimeError("GitHub pagination safety limit reached")
 
     def _forum_threads(self) -> list[dict]:
         active = self.request_json(

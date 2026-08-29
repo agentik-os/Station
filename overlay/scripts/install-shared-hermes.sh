@@ -267,6 +267,14 @@ if [ -d "$collective_home" ]; then
     XDG_RUNTIME_DIR="/run/user/$mission_uid" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
     systemctl --user enable --now agk-github-stars-forum.timer
+  sudo -u mission env \
+    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+    systemctl --user is-enabled --quiet agk-github-stars-forum.timer
+  sudo -u mission env \
+    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+    systemctl --user is-active --quiet agk-github-stars-forum.timer
 fi
 
 echo "Shared official Hermes installation completed. Recovery snapshot: $backup_dir"
