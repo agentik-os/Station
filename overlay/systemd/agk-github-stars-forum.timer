@@ -1,0 +1,12 @@
+[Unit]
+Description=Check agentik-os GitHub Stars every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=15s
+Unit=agk-github-stars-forum.service
+
+[Install]
+WantedBy=timers.target
