@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -31,6 +32,8 @@ DEALS_CHANNEL = "1541215608920612965"
 PRO_ROLE = "1541213916640841859"
 FREE_ROLE = "1541213914002489374"
 COMPOSIO = "/usr/local/bin/composio"
+COMPOSIO_ARTIFACT_ROOTS = (Path("/tmp/composio"), Path("/home/mission/.composio"))
+COMPOSIO_ARTIFACT_MAX_BYTES = 20 * 1024 * 1024
 
 
 def profile_home() -> Path:
@@ -48,6 +51,75 @@ def load_env(path: Path) -> dict[str, str]:
     return values
 
 
+def decode_composio_result(value: Any) -> Any:
+    if not isinstance(value, dict) or not value.get("storedInFile"):
+        return value
+    raw_path = value.get("outputFilePath")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise RuntimeError("Composio file output has no path")
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        raise RuntimeError("Composio file output path is not absolute")
+    selected: tuple[Path, tuple[str, ...]] | None = None
+    for root in COMPOSIO_ARTIFACT_ROOTS:
+        canonical_root = Path(os.path.abspath(root))
+        try:
+            relative = candidate.relative_to(canonical_root)
+        except ValueError:
+            continue
+        if relative.parts and ".." not in relative.parts:
+            selected = (canonical_root, relative.parts)
+            break
+    if selected is None:
+        raise RuntimeError("Composio file output escaped its artifact roots")
+    root, parts = selected
+    directory_fds: list[int] = []
+    file_fd: int | None = None
+    owned_regular = False
+    opened_metadata = None
+    parent_fd = None
+    final_name = parts[-1]
+    flags_directory = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent_fd = os.open(root, flags_directory)
+        directory_fds.append(parent_fd)
+        for component in parts[:-1]:
+            parent_fd = os.open(component, flags_directory, dir_fd=parent_fd)
+            directory_fds.append(parent_fd)
+        file_fd = os.open(final_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+        opened_metadata = os.fstat(file_fd)
+        if not stat.S_ISREG(opened_metadata.st_mode) or opened_metadata.st_uid != os.getuid():
+            raise RuntimeError("Composio file output has unsafe ownership or type")
+        owned_regular = True
+        chunks: list[bytes] = []
+        remaining = COMPOSIO_ARTIFACT_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(file_fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > COMPOSIO_ARTIFACT_MAX_BYTES:
+            raise RuntimeError("Composio file output exceeds the size limit")
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise RuntimeError("Composio file output returned invalid JSON") from error
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if owned_regular and parent_fd is not None and opened_metadata is not None:
+            try:
+                current = os.stat(final_name, dir_fd=parent_fd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == (opened_metadata.st_dev, opened_metadata.st_ino):
+                    os.unlink(final_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
 def composio_execute(slug: str, data: dict[str, Any], timeout: int = 60) -> Any:
     result = subprocess.run(
         [COMPOSIO, "execute", slug, "-d", json.dumps(data, separators=(",", ":"))],
@@ -60,7 +132,7 @@ def composio_execute(slug: str, data: dict[str, Any], timeout: int = 60) -> Any:
     if result.returncode:
         raise RuntimeError(f"Composio {slug} failed with exit code {result.returncode}")
     try:
-        value = json.loads(result.stdout)
+        value = decode_composio_result(json.loads(result.stdout))
     except ValueError as error:
         raise RuntimeError(f"Composio {slug} returned invalid JSON") from error
     if isinstance(value, dict) and value.get("successful") is False:

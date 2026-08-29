@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -166,6 +167,74 @@ def test_incomplete_stripe_session_is_not_terminally_ignored():
     poller = load(POLLER, "collective_poller_stripe_state")
     assert poller.terminally_ignorable_stripe({"status": "open", "payment_status": "unpaid"}) is False
     assert poller.terminally_ignorable_stripe({"status": "complete", "payment_status": "paid", "payment_link": "wrong"}) is True
+
+
+def test_composio_file_output_is_bounded_parsed_and_deleted(tmp_path, monkeypatch):
+    poller = load(POLLER, "collective_poller_file_output")
+    monkeypatch.setattr(poller, "COMPOSIO_ARTIFACT_ROOTS", (tmp_path,))
+    inline = {"successful": True, "data": {"inline": True}}
+    assert poller.decode_composio_result(inline) is inline
+
+    artifact = tmp_path / "result.json"
+    artifact.write_text(json.dumps({"successful": True, "data": {"items": []}}))
+    decoded = poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(artifact)})
+    assert decoded == {"successful": True, "data": {"items": []}}
+    assert not artifact.exists()
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("not-json")
+    try:
+        poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(invalid)})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("invalid Composio JSON accepted")
+    assert not invalid.exists()
+
+    monkeypatch.setattr(poller, "COMPOSIO_ARTIFACT_MAX_BYTES", 8)
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b"123456789")
+    try:
+        poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(oversized)})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("oversized Composio artifact accepted")
+    assert not oversized.exists()
+
+    fifo = tmp_path / "fifo.json"
+    os.mkfifo(fifo)
+    try:
+        poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(fifo)})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("FIFO Composio artifact accepted")
+    assert fifo.exists()
+    fifo.unlink()
+
+    outside = tmp_path.parent / ("outside-" + tmp_path.name + ".json")
+    outside.write_text("{}")
+    symlink = tmp_path / "link.json"
+    symlink.symlink_to(outside)
+    try:
+        try:
+            poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(symlink)})
+        except (OSError, RuntimeError):
+            pass
+        else:
+            raise AssertionError("symlink Composio artifact accepted")
+        assert outside.exists()
+        assert symlink.is_symlink()
+        try:
+            poller.decode_composio_result({"storedInFile": True, "outputFilePath": str(outside)})
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("outside Composio artifact accepted")
+    finally:
+        symlink.unlink(missing_ok=True)
+        outside.unlink(missing_ok=True)
 
 
 def test_news_weekday_and_daily_dedupe(tmp_path):
