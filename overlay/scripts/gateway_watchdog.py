@@ -16,7 +16,6 @@ import re
 import subprocess
 import tempfile
 import time
-import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -30,6 +29,7 @@ DEFAULT_STATE = Path("/var/lib/agk-terminal/gateway-watchdog.json")
 DEFAULT_HOME_ROOT = Path("/home")
 DEFAULT_NOTIFIER_HOME = Path("/home/operator/.hermes")
 DEFAULT_THRESHOLD = 600
+DEFAULT_OWNER_ID = "1441423462492016821"
 DISCORD_API = "https://discord.com/api/v10"
 
 
@@ -218,46 +218,19 @@ def _discord_json(
     return json.loads(raw) if raw else None
 
 
-def _normalized_channel_name(value: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(value or "").lower())
-    return "".join(character for character in text if not unicodedata.combining(character))
-
-
-def _discord_general_target(hermes_home: Path, token: str) -> str | None:
-    config = _read_yaml(hermes_home / "config.yaml")
-    discord = ((config.get("platforms") or {}).get("discord") or {})
-    extra = discord.get("extra") or {}
-    explicit = str(extra.get("offline_alert_channel_id") or "").strip()
-    if explicit.isdigit():
-        return explicit
-    home = discord.get("home_channel") or {}
-    guild_id = str(home.get("scope_id") or home.get("guild_id") or "").strip()
-    if not guild_id.isdigit():
-        home_channel = str(home.get("chat_id") or "").strip()
-        if home_channel.isdigit():
-            channel = _discord_json(token, "GET", f"/channels/{home_channel}") or {}
-            guild_id = str(channel.get("guild_id") or "")
-    if not guild_id.isdigit():
-        return None
-    channels = _discord_json(token, "GET", f"/guilds/{guild_id}/channels") or []
-    matches = [
-        channel
-        for channel in channels
-        if channel.get("type") in {0, 5}
-        and _normalized_channel_name(channel.get("name")) == "general"
-        and str(channel.get("id") or "").isdigit()
-    ]
-    matches.sort(key=lambda channel: int(channel.get("position") or 0))
-    return str(matches[0]["id"]) if matches else None
-
-
-def notify_general(notifier_home: Path, message: str) -> bool:
+def notify_owner_dm(notifier_home: Path, owner_id: str, message: str) -> bool:
     token = _env_value(notifier_home / ".env", "DISCORD_BOT_TOKEN")
-    if not token:
+    if not token or not str(owner_id).isdigit():
         return False
     try:
-        channel_id = _discord_general_target(notifier_home, token)
-        if not channel_id:
+        direct = _discord_json(
+            token,
+            "POST",
+            "/users/@me/channels",
+            {"recipient_id": str(owner_id)},
+        ) or {}
+        channel_id = str(direct.get("id") or "")
+        if not channel_id.isdigit():
             return False
         result = _discord_json(
             token,
@@ -337,8 +310,9 @@ def run_once(
 
         def send(profile: ProfileBot = profile, reason: str = reason) -> bool:
             minutes = max(1, threshold // 60)
-            return notify_general(
+            return notify_owner_dm(
                 notifier_home,
+                DEFAULT_OWNER_ID,
                 f"🔴 AGK · `{profile.name}` est hors ligne depuis {minutes} minutes ({reason}).",
             )
 
