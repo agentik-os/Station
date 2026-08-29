@@ -197,6 +197,10 @@ install -m 0755 "$repo_root/scripts/agk_control.py" "$install_root/scripts/agk_c
 install -m 0755 "$repo_root/scripts/provider.sh" "$install_root/scripts/provider.sh"
 install -m 0755 "$repo_root/scripts/doctor.sh" "$install_root/scripts/doctor.sh"
 install -m 0755 "$repo_root/scripts/sync-hermes.sh" "$install_root/scripts/sync-hermes.sh"
+install -m 0755 "$repo_root/scripts/station_discord_channel_state.py" \
+  "$install_root/scripts/station_discord_channel_state.py"
+install -m 0755 "$repo_root/scripts/install-station-discord-channel-state.py" \
+  "$install_root/scripts/install-station-discord-channel-state.py"
 install -m 0755 "$repo_root/scripts/sync-rules.py" "$install_root/scripts/sync-rules.py"
 install -m 0755 "$repo_root/scripts/sync-power-stack.py" \
   "$install_root/scripts/sync-power-stack.py"
@@ -246,6 +250,8 @@ install -m 0755 "$repo_root/scripts/install-hermes-fleet-dashboard.sh" \
 install -m 0644 "$repo_root/config/topology.yaml" "$install_root/config/topology.yaml"
 install -m 0644 "$repo_root/config/providers.yaml" "$install_root/config/providers.yaml"
 install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"
+install -m 0644 "$repo_root/config/discord-channel-state.json" \
+  "$install_root/config/discord-channel-state.json"
 install -m 0644 "$repo_root/config/power-stack.yaml" \
   "$install_root/config/power-stack.yaml"
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"
