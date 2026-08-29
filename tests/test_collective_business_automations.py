@@ -246,11 +246,14 @@ def test_composio_file_output_is_bounded_parsed_and_deleted(tmp_path, monkeypatc
 
 def test_news_weekday_and_daily_dedupe(tmp_path):
     news = load(NEWS, "collective_news")
+    assert '"core,web"' in NEWS.read_text()
     state = tmp_path / "news-state.json"
     assert news.should_publish("2026-08-31", weekday=0, state_path=state) is True
     news.record_published("2026-08-31", "154000000000000001", state)
     assert news.should_publish("2026-08-31", weekday=0, state_path=state) is False
     assert news.should_publish("2026-08-30", weekday=6, state_path=state) is False
+    assert "No verified material items" in NEWS.read_text()
+    assert 'text.find("AGK News —")' in NEWS.read_text()
 
 
 def test_packaging_installs_collective_runtime_and_exact_timers():
