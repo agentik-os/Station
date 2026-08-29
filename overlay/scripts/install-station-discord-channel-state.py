@@ -194,12 +194,18 @@ def rollback(manifest: Path) -> dict:
             "--channel-id", target["channel_id"], "--base-name", target["base_name"],
             "--parent-id", target["parent_id"], "--position", str(target["position"]),
         ]
+        restored_target = False
         try:
             result = subprocess.run(command, text=True, capture_output=True, timeout=60, check=True)
             restored.append(json.loads(result.stdout))
+            restored_target = True
         except (subprocess.SubprocessError, ValueError) as exc:
             errors.append({"key": target["key"], "error": type(exc).__name__})
-        unit_path(target).unlink(missing_ok=True)
+        if restored_target:
+            unit_path(target).unlink(missing_ok=True)
+        else:
+            # Preserve a working, retryable projector when Discord defers rollback.
+            user_systemctl(target["user"], "enable", "--now", name, check=False)
         users.add(target["user"])
     for user in sorted(users):
         user_systemctl(user, "daemon-reload")

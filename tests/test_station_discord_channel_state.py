@@ -347,3 +347,41 @@ def test_installer_copy_is_safe_when_executed_from_installed_path(tmp_path: Path
     installed.write_text("stable\n", encoding="utf-8")
     assert INSTALLER.copy_file(installed, installed) is False
     assert installed.read_text(encoding="utf-8") == "stable\n"
+
+
+def test_incomplete_rollback_keeps_failed_target_service_retryable(tmp_path: Path, monkeypatch) -> None:
+    unit = tmp_path / "station-discord-channel-state-operator.service"
+    unit.write_text("[Service]\n", encoding="utf-8")
+    projector = tmp_path / "station_discord_channel_state.py"
+    projector.write_text("# safe\n", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+    target = {
+        "key": "operator",
+        "user": "operator",
+        "hermes_home": "/home/operator/.hermes",
+        "channel_id": "1541820137148260432",
+        "base_name": "operator",
+        "parent_id": "1541820192454082580",
+        "position": 3,
+    }
+    monkeypatch.setattr(INSTALLER.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(INSTALLER.MODULE, "load_targets", lambda _: [target])
+    monkeypatch.setattr(INSTALLER, "unit_path", lambda _: unit)
+    monkeypatch.setattr(INSTALLER, "PROJECTOR_INSTALLED", projector)
+
+    def systemctl(_user: str, *args: str, **_kwargs):
+        calls.append(args)
+        return __import__("subprocess").CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(INSTALLER, "user_systemctl", systemctl)
+    monkeypatch.setattr(
+        INSTALLER.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            __import__("subprocess").CalledProcessError(1, "restore")
+        ),
+    )
+    result = INSTALLER.rollback(tmp_path / "manifest.json")
+    assert result["status"] == "rollback-incomplete"
+    assert unit.exists()
+    assert ("enable", "--now", unit.name) in calls
