@@ -169,6 +169,13 @@ def test_incomplete_stripe_session_is_not_terminally_ignored():
     assert poller.terminally_ignorable_stripe({"status": "complete", "payment_status": "paid", "payment_link": "wrong"}) is True
 
 
+def test_unrelated_stripe_session_never_fetches_line_items(monkeypatch):
+    poller = load(POLLER, "collective_poller_prefilter")
+    monkeypatch.setattr(poller, "stripe_line_items", lambda session_id: (_ for _ in ()).throw(AssertionError("line items fetched")))
+    session = {"id": "cs_other", "status": "complete", "payment_status": "paid", "payment_link": "plink_other", "mode": "subscription", "currency": "eur", "amount_total": 9700, "client_reference_id": "123456789012345678"}
+    assert poller.mapped_checkout(session) is None
+
+
 def test_composio_file_output_is_bounded_parsed_and_deleted(tmp_path, monkeypatch):
     poller = load(POLLER, "collective_poller_file_output")
     monkeypatch.setattr(poller, "COMPOSIO_ARTIFACT_ROOTS", (tmp_path,))
