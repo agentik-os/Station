@@ -64,6 +64,59 @@ def _profile_metadata(profile_dir: Path, profile_id: str) -> tuple[str, str]:
     return name, description
 
 
+def _env_key_configured(path: Path, key: str) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return False
+    prefix = key + "="
+    return any(line.startswith(prefix) and bool(line[len(prefix):].strip()) for line in lines)
+
+
+def _discord_profile_state(hermes: Path, profile_id: str) -> dict[str, Any]:
+    if not profile_id or profile_id == "default":
+        return {
+            "dedicated": False, "status": "profile_required",
+            "token_configured": False, "service_installed": False,
+            "gateway_connected": False, "service": "",
+        }
+    profile_dir = hermes / "profiles" / profile_id
+    home = hermes.parent
+    service = f"hermes-gateway-{profile_id}.service"
+    user_unit = home / ".config" / "systemd" / "user" / service
+    system_unit = Path("/etc/systemd/system") / service
+    service_installed = user_unit.is_file() or system_unit.is_file()
+    token_configured = _env_key_configured(profile_dir / ".env", "DISCORD_BOT_TOKEN")
+    connected = False
+    try:
+        state = json.loads((profile_dir / "gateway_state.json").read_text(encoding="utf-8"))
+        platform = state.get("platforms", {}).get("discord", {}) if isinstance(state, dict) else {}
+        pid = int(state.get("pid") or 0) if isinstance(state, dict) else 0
+        writer_pid = int(platform.get("writer_pid") or 0) if isinstance(platform, dict) else 0
+        connected = bool(
+            isinstance(platform, dict)
+            and platform.get("state") == "connected"
+            and pid > 0
+            and writer_pid == pid
+            and Path(f"/proc/{pid}").is_dir()
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        connected = False
+    status = (
+        "connected" if connected
+        else "owner_required" if not token_configured
+        else "service_required" if not service_installed
+        else "configured"
+    )
+    return {
+        "dedicated": True, "status": status,
+        "token_configured": token_configured,
+        "service_installed": service_installed,
+        "gateway_connected": connected,
+        "service": service,
+    }
+
+
 def _connect(path: Path) -> sqlite3.Connection | None:
     if not path.is_file() or path.is_symlink():
         return None
@@ -327,15 +380,17 @@ def _agents(hermes: Path, organisation: str) -> list[dict[str, Any]]:
         prompt_present = (path.parent / prompt_name).is_file() and "/" not in prompt_name and ".." not in prompt_name
         raw_os = raw.get("os")
         os_items: list[Any] = raw_os if isinstance(raw_os, list) else []
+        profile_id = _safe_id(raw.get("profile"))
         result.append({
             "id": agent_id, "name": _text(raw.get("name"), 160) or agent_id,
             "version": _text(raw.get("version"), 40),
             "description": _text(raw.get("description"), 320),
             "scope": [str(scope) for scope in scopes if isinstance(scope, str)][:8],
             "runtime": _text(raw.get("runtime"), 60),
-            "profile": _safe_id(raw.get("profile")),
+            "profile": profile_id,
             "os": [_text(item, 120) for item in os_items if isinstance(item, str)][:20],
             "ready": prompt_present,
+            "discord": _discord_profile_state(hermes, profile_id),
         })
     known = {item["id"] for item in result}
     claimed_profiles = {item["profile"] for item in result if item.get("profile")}
@@ -363,6 +418,7 @@ def _agents(hermes: Path, organisation: str) -> list[dict[str, Any]]:
                 "profile": profile_id,
                 "os": [],
                 "ready": True,
+                "discord": _discord_profile_state(hermes, profile_id),
             })
     result.sort(key=lambda item: (item["name"].casefold(), item["id"]))
     return result

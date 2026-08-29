@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -80,6 +81,15 @@ def make_fixture(root: Path, org: str) -> dict[str, Path]:
         "display_name": "AGK Architect",
         "description": "Designs AGK systems",
     }))
+    (standalone / ".env").write_text("DISCORD_BOT_TOKEN=test-token\n")
+    process_id = os.getpid()
+    (standalone / "gateway_state.json").write_text(json.dumps({
+        "pid": process_id,
+        "platforms": {"discord": {"state": "connected", "writer_pid": process_id}},
+    }))
+    unit_dir = home / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "hermes-gateway-agk-architect.service").write_text("[Service]\n")
     return {"home": home, "hermes": hermes}
 
 
@@ -113,6 +123,17 @@ def test_snapshot_collects_only_bounded_operational_metadata(tmp_path):
     architect = agents["agk-architect"]
     assert architect["name"] == "AGK Architect"
     assert architect["description"] == "Designs AGK systems"
+    assert architect["discord"]["status"] == "connected"
+    assert architect["discord"]["service_installed"] is True
+    assert architect["discord"]["token_configured"] is True
+    assert agents["builder"]["discord"]["status"] == "owner_required"
+    (fixture["hermes"] / "profiles" / "agk-architect" / "gateway_state.json").write_text(json.dumps({
+        "pid": 99999999,
+        "platforms": {"discord": {"state": "connected", "writer_pid": 99999999}},
+    }))
+    stale = module._discord_profile_state(fixture["hermes"], "agk-architect")
+    assert stale["gateway_connected"] is False
+    assert stale["status"] == "configured"
     operating_systems = {item["id"]: item for item in station["os"]}
     assert operating_systems["missing-os"]["installed"] is False
     assert operating_systems["ops-os"]["installed"] is True

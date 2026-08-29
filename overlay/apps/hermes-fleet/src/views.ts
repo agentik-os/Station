@@ -13,6 +13,14 @@ const STATUS_LABELS: Record<string, string> = {
   done: "Terminé",
 };
 
+const DISCORD_STATUS_LABELS: Record<string, string> = {
+  connected: "Connecté",
+  configured: "Configuré",
+  owner_required: "App/token requis",
+  service_required: "Service requis",
+  profile_required: "Profil bot requis",
+};
+
 const KANBAN_GROUPS = [
   { id: "queue", label: "File", statuses: ["triage", "todo", "scheduled", "ready"] },
   { id: "running", label: "En cours", statuses: ["running"] },
@@ -37,6 +45,13 @@ function numberValue(record: Record<string, unknown>, key: string): number {
 
 function textValue(record: Record<string, unknown>, key: string): string {
   return typeof record[key] === "string" ? String(record[key]) : "";
+}
+
+function recordValue(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function stationBadge(station: FleetStation, global: boolean): string {
@@ -131,11 +146,18 @@ export function renderAgents(stations: FleetStation[], global: boolean): string 
       const ready = Boolean(agent.ready);
       const name = textValue(agent, "name");
       const profile = textValue(agent, "profile") || "default";
+      const discordState = recordValue(agent, "discord");
+      const discordStatus = textValue(discordState, "status") || "profile_required";
+      const dedicated = Boolean(discordState.dedicated) && profile !== "default";
+      const discordLabel = DISCORD_STATUS_LABELS[discordStatus] ?? discordStatus;
+      const discordClass = discordStatus === "connected" ? "is-ready" : discordStatus === "configured" ? "" : "is-warning";
       const manage = profile !== "default"
         ? `<button type="button" class="agent-manage" data-agent-manage="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Gérer</button>`
         : "";
-      const discord = `<button type="button" class="agent-discord" data-agent-discord="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Discord</button>`;
-      return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="health-dot ${ready ? "is-online" : "is-offline"}"></span></header><p>${escapeHtml(textValue(agent, "description"))}</p><footer>${stationBadge(station, global)}<span>${escapeHtml(profile)}</span><code>v${escapeHtml(textValue(agent, "version"))}</code>${manage}${discord}</footer></article>`;
+      const discord = dedicated
+        ? `<button type="button" class="agent-discord" data-agent-discord="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Bot Discord</button>`
+        : `<button type="button" class="agent-discord" data-agent-bot-profile="${escapeHtml(textValue(agent, "id"))}" data-agent-organisation="${escapeHtml(station.id)}">Créer profil bot</button>`;
+      return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="health-dot ${ready ? "is-online" : "is-offline"}"></span></header><p>${escapeHtml(textValue(agent, "description"))}</p><footer>${stationBadge(station, global)}<span>${escapeHtml(profile)}</span><span class="state-pill ${discordClass}">${escapeHtml(discordLabel)}</span><code>v${escapeHtml(textValue(agent, "version"))}</code>${manage}${discord}</footer></article>`;
     }).join("");
     return `<section class="agent-station" data-station="${escapeHtml(station.id)}"><header class="agent-station-header"><div><h2>${escapeHtml(station.id)}</h2><span>${station.agents.length} agent(s)</span></div><button type="button" class="setup-action" data-agent-setup="${escapeHtml(station.id)}">Nouvel agent</button></header><div class="agent-grid">${cards || emptyState("Aucun agent configuré pour cette station.")}</div></section>`;
   }).join("");

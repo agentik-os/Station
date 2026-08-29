@@ -57,6 +57,21 @@ export interface FleetSnapshot {
     Record<string, FleetStation | undefined>;
 }
 
+function safeDiscordState(agent: Record<string, unknown>): Record<string, unknown> {
+  const value = agent.discord;
+  const discord = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    dedicated: Boolean(discord.dedicated),
+    status: typeof discord.status === "string" ? discord.status : "profile_required",
+    token_configured: Boolean(discord.token_configured),
+    service_installed: Boolean(discord.service_installed),
+    gateway_connected: Boolean(discord.gateway_connected),
+    service: typeof discord.service === "string" ? discord.service : "",
+  };
+}
+
 function redactCrossBoundaryStation(station: FleetStation): FleetStation {
   return {
     ...station,
@@ -87,6 +102,7 @@ function redactCrossBoundaryStation(station: FleetStation): FleetStation {
       profile: agent.profile,
       scope: agent.scope,
       os: agent.os,
+      discord: safeDiscordState(agent),
     })),
     os: (station.os ?? []).map((operatingSystem) => ({
       id: operatingSystem.id,

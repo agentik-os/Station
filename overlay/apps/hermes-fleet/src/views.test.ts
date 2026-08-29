@@ -39,7 +39,7 @@ describe("Fleet views", () => {
   it("renders canonical agent names with setup and management controls", () => {
     const withAgents: FleetStation = {
       ...station,
-      agents: [{ id: "agk-architect", name: "AGK Architect", description: "Designs AGK systems", profile: "agk-architect", version: "profile", runtime: "hermes-profile", ready: true }],
+      agents: [{ id: "agk-architect", name: "AGK Architect", description: "Designs AGK systems", profile: "agk-architect", version: "profile", runtime: "hermes-profile", ready: true, discord: { dedicated: true, status: "connected", token_configured: true, service_installed: true, gateway_connected: true } }],
     };
     const html = renderAgents([withAgents], false);
     expect(html).toContain("AGK Architect");
@@ -47,6 +47,8 @@ describe("Fleet views", () => {
     expect(html).toContain('data-agent-setup="agentik"');
     expect(html).toContain('data-agent-manage="agk-architect"');
     expect(html).toContain('data-agent-discord="agk-architect"');
+    expect(html).toContain("Bot Discord");
+    expect(html).toContain("Connecté");
   });
 
   it("renders canonical session titles and profile names", () => {
@@ -58,5 +60,16 @@ describe("Fleet views", () => {
     expect(html).toContain("Brand review");
     expect(html).toContain("brand-guardian");
     expect(html).not.toContain("Session session-1");
+  });
+
+  it("requires a dedicated profile before offering a bot to an unprofiled agent", () => {
+    const unprofiled: FleetStation = {
+      ...station,
+      agents: [{ id: "completion-oracle", name: "Completion Oracle", description: "Verifies completion", profile: "", version: "1.0.0", runtime: "hermes", ready: true, discord: { dedicated: false, status: "profile_required", token_configured: false, service_installed: false, gateway_connected: false } }],
+    };
+    const html = renderAgents([unprofiled], false);
+    expect(html).toContain("Profil bot requis");
+    expect(html).toContain('data-agent-bot-profile="completion-oracle"');
+    expect(html).not.toContain('data-agent-discord="default"');
   });
 });

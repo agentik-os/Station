@@ -191,6 +191,14 @@ function bindAgentControls(): void {
       }
     });
   }
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-agent-bot-profile]")) {
+    button.addEventListener("click", () => {
+      const id = button.dataset.agentOrganisation as OrganisationId;
+      if (ORGANISATIONS.some((item) => item.id === id)) {
+        openHermesRoute(id, agentSetupRoute(id));
+      }
+    });
+  }
 }
 
 function bindInteractions(): void {
