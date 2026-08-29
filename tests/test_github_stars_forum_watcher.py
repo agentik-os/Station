@@ -137,8 +137,28 @@ def test_station_packages_five_minute_collective_timer():
     assert "github_stars_forum_watcher.py" in service
     assert "/home/mission/.hermes/profiles/collective" in service
     assert "OnUnitActiveSec=5min" in timer
+    assert "RandomizedDelaySec" not in timer
     assert "Persistent=true" in timer
     assert "agk-github-stars-forum.timer" in installer
     assert "loginctl enable-linger mission" in installer
     assert 'systemctl start "user@$mission_uid.service"' in installer
     assert '[ -S "/run/user/$mission_uid/bus" ] || {' in installer
+    assert "is-enabled --quiet agk-github-stars-forum.timer" in installer
+    assert "is-active --quiet agk-github-stars-forum.timer" in installer
+
+
+def test_github_pagination_fails_closed_at_safety_limit():
+    mod = _module()
+    api = mod.Api("not-used")
+    calls = []
+
+    def full_page(_method, url, **_kwargs):
+        calls.append(url)
+        return [_star(index) for index in range(100)]
+
+    api.request_json = full_page
+
+    with pytest.raises(RuntimeError, match="pagination safety limit"):
+        api.list_stars()
+
+    assert len(calls) == 50
