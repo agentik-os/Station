@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
 """Drain a Station gateway to zero work, then request an in-band reload."""
 from __future__ import annotations
-import argparse,json,os,pwd,re,signal,subprocess,sys,time
+import argparse,ast,json,os,pwd,re,signal,subprocess,sys,time
 from pathlib import Path
 
 HERMES_SOURCE=Path('/opt/agk-terminal/hermes-agent')
+
+
+def _assert_gateway_source_contract(source_root:Path=HERMES_SOURCE)->None:
+ base=source_root/'gateway/platforms/base.py'
+ try: tree=ast.parse(base.read_text(encoding='utf-8'))
+ except (OSError,SyntaxError,UnicodeError) as exc:
+  raise RuntimeError('gateway source contract unavailable') from exc
+ for node in tree.body:
+  if isinstance(node,ast.ClassDef) and node.name=='BasePlatformAdapter':
+   for child in node.body:
+    if not isinstance(child,ast.FunctionDef) or child.name!='_wire_plugin_handlers': continue
+    names=[argument.arg for argument in child.args.args]
+    defaults=child.args.defaults
+    if names==['self','native'] and len(defaults)==1 and isinstance(defaults[0],ast.Constant) and defaults[0].value is None and child.args.vararg is None and child.args.kwarg is None and not child.args.kwonlyargs: return
+ raise RuntimeError('gateway plugin handler wiring contract missing')
 
 def _drain_api():
  sys.path.insert(0,str(HERMES_SOURCE))
@@ -50,6 +65,7 @@ def main()->int:
  if probe.returncode:
   print(json.dumps({'status':'not-running','user':args.user,'unit':args.unit,'active_agents_before':0,'old_pid':0,'new_pid':0}))
   return 0
+ _assert_gateway_source_contract()
  initial=status(home); old_pid=int(initial.get('pid') or 0)
  clear_drain_request,write_drain_request=_drain_api(); marker=home/'.drain_request.json'; marker_active=False
  def cancel_signal(signum, _frame):

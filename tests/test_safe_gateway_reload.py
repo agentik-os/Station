@@ -58,3 +58,34 @@ def test_failed_marker_clear_fails_closed(tmp_path):
  with pytest.raises(RuntimeError,match="drain marker remains active"):
   module._clear_drain_marker(failed_clear,tmp_path)
  assert marker.exists()
+
+
+def test_gateway_source_contract_requires_plugin_handler_wiring(tmp_path):
+ module=load(); base=tmp_path/"gateway/platforms/base.py"; base.parent.mkdir(parents=True)
+ base.write_text("class BasePlatformAdapter:\n pass\n")
+ with pytest.raises(RuntimeError,match="plugin handler wiring"):
+  module._assert_gateway_source_contract(tmp_path)
+
+
+def test_gateway_source_contract_accepts_plugin_handler_wiring(tmp_path):
+ module=load(); base=tmp_path/"gateway/platforms/base.py"; base.parent.mkdir(parents=True)
+ base.write_text("class BasePlatformAdapter:\n def _wire_plugin_handlers(self, native=None):\n  return None\n")
+ module._assert_gateway_source_contract(tmp_path)
+
+
+def test_gateway_source_contract_rejects_incompatible_plugin_handler_signature(tmp_path):
+ module=load(); base=tmp_path/"gateway/platforms/base.py"; base.parent.mkdir(parents=True)
+ base.write_text("class BasePlatformAdapter:\n def _wire_plugin_handlers(self):\n  return None\n")
+ with pytest.raises(RuntimeError,match="plugin handler wiring"):
+  module._assert_gateway_source_contract(tmp_path)
+
+
+@pytest.mark.parametrize("method",[
+ "async def _wire_plugin_handlers(self, native=None):\n  return None",
+ "def _wire_plugin_handlers(self, native=True):\n  return None",
+])
+def test_gateway_source_contract_rejects_async_or_non_none_default(tmp_path,method):
+ module=load(); base=tmp_path/"gateway/platforms/base.py"; base.parent.mkdir(parents=True)
+ base.write_text(f"class BasePlatformAdapter:\n {method}\n")
+ with pytest.raises(RuntimeError,match="plugin handler wiring"):
+  module._assert_gateway_source_contract(tmp_path)

@@ -9,6 +9,7 @@ when the profile gateway itself is down.  Recovery is silent.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import pwd
@@ -31,6 +32,9 @@ DEFAULT_NOTIFIER_HOME = Path("/home/operator/.hermes")
 DEFAULT_THRESHOLD = 600
 DEFAULT_OWNER_ID = "1441423462492016821"
 DISCORD_API = "https://discord.com/api/v10"
+SAFE_RELOAD_SCRIPT = Path("/usr/local/lib/agk-terminal/scripts/station_safe_gateway_reload.py")
+DISCONNECT_RECOVERY_DELAY = 120
+RECOVERY_COOLDOWN = 600
 
 
 @dataclass(frozen=True)
@@ -136,9 +140,11 @@ def attempt_recovery(
     runner: Callable[..., Any] = subprocess.run,
     account_lookup: Callable[[str], Any] = pwd.getpwnam,
 ) -> bool:
-    """Start an enabled missing gateway without overriding maintenance or masks."""
+    """Recover a missing process or a persistently disconnected platform safely."""
 
-    if reason not in {"gateway state unavailable", "gateway process unavailable"}:
+    supported_process = reason in {"gateway state unavailable", "gateway process unavailable"}
+    supported_disconnect = reason.endswith(" disconnected")
+    if not supported_process and not supported_disconnect:
         return False
     if (profile.hermes_home / ".drain_request.json").exists():
         return False
@@ -150,6 +156,25 @@ def attempt_recovery(
         return False
 
     linux_user, unit = gateway_unit(profile)
+    if supported_disconnect:
+        try:
+            result = runner(
+                [
+                    str(SAFE_RELOAD_SCRIPT),
+                    "--user", linux_user,
+                    "--unit", unit,
+                    "--hermes-home", str(profile.hermes_home),
+                    "--timeout", "60",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=360,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
     account = account_lookup(linux_user)
     runtime = f"/run/user/{account.pw_uid}"
     prefix = [
@@ -175,6 +200,18 @@ def attempt_recovery(
         timeout=30,
     )
     return started.returncode == 0
+
+
+def _should_attempt_recovery(record: dict[str, Any] | None, reason: str, *, now: float) -> bool:
+    if reason in {"gateway state unavailable", "gateway process unavailable"}:
+        return True
+    if not reason.endswith(" disconnected") or not record:
+        return False
+    down_since = float(record.get("down_since") or now)
+    if now - down_since < DISCONNECT_RECOVERY_DELAY:
+        return False
+    attempted_at = record.get("recovery_attempted_at")
+    return attempted_at is None or now - float(attempted_at) >= RECOVERY_COOLDOWN
 
 
 def _env_value(path: Path, key: str) -> str | None:
@@ -293,7 +330,26 @@ def _save_state(path: Path, state: dict[str, Any]) -> None:
             pass
 
 
-def run_once(
+def _acquire_watchdog_lock(state_path: Path) -> int | None:
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return None
+    return descriptor
+
+
+def _release_watchdog_lock(descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
+def _run_once_unlocked(
     *,
     state_path: Path = DEFAULT_STATE,
     home_root: Path = DEFAULT_HOME_ROOT,
@@ -306,9 +362,23 @@ def run_once(
     next_state: dict[str, Any] = {}
     for profile in discover_profile_bots(home_root):
         healthy, reason = profile_health(profile)
-        recovered = False if healthy else attempt_recovery(profile, reason)
+        prior = previous.get(str(profile.hermes_home))
+        attempted = False if healthy else _should_attempt_recovery(prior, reason, now=timestamp)
+        recovered = False
+        if attempted:
+            try:
+                recovered = attempt_recovery(profile, reason)
+            except Exception:
+                recovered = False
+        if recovered:
+            try:
+                healthy, reason = profile_health(profile)
+            except Exception:
+                healthy, reason = False, "gateway state unavailable"
 
         def send(profile: ProfileBot = profile, reason: str = reason) -> bool:
+            if recovered:
+                return False
             minutes = max(1, threshold // 60)
             return notify_owner_dm(
                 notifier_home,
@@ -317,7 +387,7 @@ def run_once(
             )
 
         record = evaluate_profile(
-            previous.get(str(profile.hermes_home)),
+            prior,
             healthy=healthy,
             reason=reason,
             now=timestamp,
@@ -325,11 +395,35 @@ def run_once(
             send=send,
         )
         if record is not None:
-            if recovered:
+            if attempted:
                 record["recovery_attempted_at"] = timestamp
+                record["recovery_succeeded"] = bool(recovered)
             next_state[str(profile.hermes_home)] = record
     _save_state(state_path, next_state)
     return next_state
+
+
+def run_once(
+    *,
+    state_path: Path = DEFAULT_STATE,
+    home_root: Path = DEFAULT_HOME_ROOT,
+    notifier_home: Path = DEFAULT_NOTIFIER_HOME,
+    threshold: int = DEFAULT_THRESHOLD,
+    now: float | None = None,
+) -> dict[str, Any]:
+    descriptor = _acquire_watchdog_lock(state_path)
+    if descriptor is None:
+        return _load_state(state_path)
+    try:
+        return _run_once_unlocked(
+            state_path=state_path,
+            home_root=home_root,
+            notifier_home=notifier_home,
+            threshold=threshold,
+            now=now,
+        )
+    finally:
+        _release_watchdog_lock(descriptor)
 
 
 def main() -> int:
