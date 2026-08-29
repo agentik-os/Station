@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -277,6 +280,38 @@ def test_malformed_retry_after_uses_safe_fallback() -> None:
     assert caught.value.retry_after == 1.0
 
 
+@pytest.mark.parametrize(
+    ("headers", "body", "expected"),
+    [
+        ({"retry-after": "583.25"}, {}, 583.25),
+        ({"Retry-After": "invalid"}, {"retry_after": 583.25}, 583.25),
+        ({"Retry-After": "Infinity"}, {}, 1.0),
+        ({}, {"retry_after": "NaN"}, 1.0),
+        ({"Retry-After": "-1"}, {}, 1.0),
+    ],
+)
+def test_retry_after_is_case_insensitive_finite_and_falls_back_to_body(
+    headers: dict[str, str], body: dict, expected: float
+) -> None:
+    client = MODULE.DiscordClient("secret", request=lambda *_: (429, headers, body))
+    with pytest.raises(MODULE.DiscordRateLimited) as caught:
+        client.get_channel("42")
+    assert caught.value.retry_after == expected
+
+
+def test_retry_after_non_object_json_body_uses_bounded_fallback() -> None:
+    client = MODULE.DiscordClient("secret", request=lambda *_: (429, {}, []))
+    with pytest.raises(MODULE.DiscordRateLimited) as caught:
+        client.get_channel("42")
+    assert caught.value.retry_after == 1.0
+
+
+def test_retry_after_oversized_numeric_value_uses_bounded_fallback() -> None:
+    oversized = 10**4000
+    assert MODULE._retry_after_seconds({}, {"retry_after": oversized}) == 1.0
+    assert MODULE._retry_after_seconds({"Retry-After": oversized}, {}) == 1.0
+
+
 def test_cli_parser_exposes_bounded_runtime_and_override_commands() -> None:
     parser = MODULE.build_parser()
     run = parser.parse_args([
@@ -342,11 +377,222 @@ def test_rendered_unit_is_profile_isolated_and_never_contains_a_token() -> None:
     assert "Restart=on-failure" in unit
 
 
-def test_installer_copy_is_safe_when_executed_from_installed_path(tmp_path: Path) -> None:
-    installed = tmp_path / "station_discord_channel_state.py"
-    installed.write_text("stable\n", encoding="utf-8")
-    assert INSTALLER.copy_file(installed, installed) is False
-    assert installed.read_text(encoding="utf-8") == "stable\n"
+def test_units_are_installed_only_in_root_controlled_systemd_search_path() -> None:
+    target = {"key": "agentik", "user": "agentik"}
+    assert INSTALLER.unit_path(target) == Path("/etc/systemd/user/station-discord-channel-state-agentik.service")
+    assert INSTALLER.legacy_unit_path(target) == Path(
+        "/home/agentik/.config/systemd/user/station-discord-channel-state-agentik.service"
+    )
+
+
+def test_atomic_install_replaces_hostile_symlink_without_touching_victim(tmp_path: Path) -> None:
+    staging = tmp_path / "root-staging"
+    staging.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    source.write_text("replacement\n", encoding="utf-8")
+    victim = tmp_path / "victim"
+    victim.write_text("do-not-touch\n", encoding="utf-8")
+    destination = tmp_path / "unit.service"
+    destination.symlink_to(victim)
+
+    INSTALLER.atomic_install_file(
+        source,
+        destination,
+        staging_dir=staging,
+        mode=0o644,
+        uid=os.getuid(),
+        gid=os.getgid(),
+    )
+
+    assert not destination.is_symlink()
+    assert destination.read_text(encoding="utf-8") == "replacement\n"
+    assert victim.read_text(encoding="utf-8") == "do-not-touch\n"
+
+
+def test_atomic_install_rejects_symlinked_parent_without_redirected_write(tmp_path: Path) -> None:
+    staging = tmp_path / "root-staging"
+    staging.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    source.write_text("replacement\n", encoding="utf-8")
+    redirected = tmp_path / "redirected"
+    redirected.mkdir()
+    parent = tmp_path / "user-systemd"
+    parent.symlink_to(redirected, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        INSTALLER.atomic_install_file(
+            source,
+            parent / "unit.service",
+            staging_dir=staging,
+            mode=0o644,
+            uid=os.getuid(),
+            gid=os.getgid(),
+        )
+
+    assert not (redirected / "unit.service").exists()
+
+
+def test_atomic_install_detects_destination_parent_replacement(tmp_path: Path, monkeypatch) -> None:
+    staging = tmp_path / "root-staging"
+    staging.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    source.write_text("replacement\n", encoding="utf-8")
+    parent = tmp_path / "user-systemd"
+    parent.mkdir(mode=0o700)
+    destination = parent / "unit.service"
+    original_replace = INSTALLER.os.replace
+    moved_parent = tmp_path / "renamed-away"
+
+    def replace_after_parent_swap(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+        parent.rename(moved_parent)
+        parent.mkdir(mode=0o700)
+        destination.write_text("attacker-controlled\n", encoding="utf-8")
+        return original_replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    monkeypatch.setattr(INSTALLER.os, "replace", replace_after_parent_swap)
+    with pytest.raises(RuntimeError, match="destination parent changed"):
+        INSTALLER.atomic_install_file(
+            source,
+            destination,
+            staging_dir=staging,
+            mode=0o644,
+            uid=os.getuid(),
+            gid=os.getgid(),
+        )
+
+    assert destination.read_text(encoding="utf-8") == "attacker-controlled\n"
+
+
+def test_atomic_install_closes_descriptors_when_parent_open_fails(tmp_path: Path) -> None:
+    staging = tmp_path / "root-staging"
+    staging.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    source.write_text("replacement\n", encoding="utf-8")
+    redirected = tmp_path / "redirected"
+    redirected.mkdir()
+    parent = tmp_path / "user-systemd"
+    parent.symlink_to(redirected, target_is_directory=True)
+    before = len(list(Path("/proc/self/fd").iterdir()))
+
+    for _ in range(20):
+        with pytest.raises(OSError):
+            INSTALLER.atomic_install_file(
+                source,
+                parent / "unit.service",
+                staging_dir=staging,
+                mode=0o644,
+                uid=os.getuid(),
+                gid=os.getgid(),
+            )
+
+    assert len(list(Path("/proc/self/fd").iterdir())) == before
+
+
+def test_atomic_install_preserves_timestamp_and_extended_attributes(tmp_path: Path) -> None:
+    staging = tmp_path / "root-staging"
+    staging.mkdir(mode=0o700)
+    source = tmp_path / "source"
+    source.write_text("original\n", encoding="utf-8")
+    original_ns = 1_650_000_000_123_456_789
+    os.utime(source, ns=(original_ns, original_ns))
+    try:
+        os.setxattr(source, "user.agk-test", b"preserved")
+    except OSError as exc:
+        pytest.skip(f"filesystem does not support user xattrs: {exc}")
+    destination = tmp_path / "restored"
+
+    INSTALLER.atomic_install_file(
+        source,
+        destination,
+        staging_dir=staging,
+        mode=0o640,
+        uid=os.getuid(),
+        gid=os.getgid(),
+        preserve_metadata=True,
+    )
+
+    assert destination.stat().st_mtime_ns == original_ns
+    assert os.getxattr(destination, "user.agk-test") == b"preserved"
+
+
+def test_trusted_backup_root_rejects_symlink_and_writable_directory(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    with pytest.raises(OSError):
+        INSTALLER.ensure_trusted_directory(linked, create=False, trusted_ancestor=tmp_path)
+
+    writable = tmp_path / "writable"
+    writable.mkdir(mode=0o777)
+    writable.chmod(0o777)
+    with pytest.raises(PermissionError):
+        INSTALLER.ensure_trusted_directory(writable, create=False, trusted_ancestor=tmp_path)
+
+
+def test_install_failure_restores_all_files_and_service_state(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.py"
+    source.write_text("new-projector\n", encoding="utf-8")
+    installed = tmp_path / "installed.py"
+    installed.write_text("old-projector\n", encoding="utf-8")
+    installed.chmod(0o4755)
+    backup_root = tmp_path / "backups"
+    units = [tmp_path / "one.service", tmp_path / "two.service"]
+    units[0].write_text("old-one\n", encoding="utf-8")
+    units[1].write_text("old-two\n", encoding="utf-8")
+    units[0].chmod(0o2750)
+    units[1].chmod(0o1755)
+    original_ns = 1_650_000_000_123_456_789
+    os.utime(installed, ns=(original_ns, original_ns))
+    for unit in units:
+        os.utime(unit, ns=(original_ns, original_ns))
+    targets = [
+        {"key": "one", "user": "operator"},
+        {"key": "two", "user": "operator"},
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(INSTALLER.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(INSTALLER, "PROJECTOR_SOURCE", source)
+    monkeypatch.setattr(INSTALLER, "PROJECTOR_INSTALLED", installed)
+    monkeypatch.setattr(INSTALLER, "INSTALL_ROOT", tmp_path)
+    monkeypatch.setattr(INSTALLER, "BACKUP_ROOT", backup_root)
+    monkeypatch.setattr(
+        INSTALLER,
+        "ensure_trusted_directory",
+        lambda path, **_: Path(path).mkdir(mode=0o700, parents=True, exist_ok=True),
+    )
+    monkeypatch.setattr(INSTALLER.MODULE, "load_targets", lambda _: targets)
+    monkeypatch.setattr(INSTALLER.MODULE, "render_unit", lambda target, **_: f"new-{target['key']}\n")
+    monkeypatch.setattr(INSTALLER, "unit_path", lambda target: units[0 if target["key"] == "one" else 1])
+    monkeypatch.setattr(
+        INSTALLER.pwd,
+        "getpwnam",
+        lambda _user: type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})(),
+    )
+
+    def systemctl(_user: str, *args: str, check: bool = True):
+        calls.append(args)
+        if args[:1] == ("is-enabled",):
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:1] == ("is-active",):
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:1] == ("restart",) and args[-1] == units[1].name and check:
+            raise subprocess.CalledProcessError(1, args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(INSTALLER, "user_systemctl", systemctl)
+    with pytest.raises(subprocess.CalledProcessError):
+        INSTALLER.install(tmp_path / "manifest.json")
+
+    assert installed.read_text(encoding="utf-8") == "old-projector\n"
+    assert [path.read_text(encoding="utf-8") for path in units] == ["old-one\n", "old-two\n"]
+    assert installed.stat().st_mtime_ns == original_ns
+    assert [path.stat().st_mtime_ns for path in units] == [original_ns, original_ns]
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o4755
+    assert [stat.S_IMODE(path.stat().st_mode) for path in units] == [0o2750, 0o1755]
+    assert ("enable", units[0].name) in calls
+    assert ("start", units[0].name) in calls
 
 
 def test_incomplete_rollback_keeps_failed_target_service_retryable(tmp_path: Path, monkeypatch) -> None:

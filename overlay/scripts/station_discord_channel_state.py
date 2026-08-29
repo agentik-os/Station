@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pwd
 import re
@@ -16,13 +17,30 @@ from pathlib import Path
 from typing import Any
 
 VALID_STATES = frozenset({"idle", "working", "blocked", "approval"})
+MAX_RETRY_AFTER_SECONDS = 86400.0
+
+
+def _retry_after_seconds(headers: dict[str, str], body: Any) -> float:
+    normalized = {str(key).lower(): value for key, value in headers.items()}
+    payload = body if isinstance(body, dict) else {}
+    for raw in (normalized.get("retry-after"), payload.get("retry_after")):
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(value) and value > 0:
+            return min(value, MAX_RETRY_AFTER_SECONDS)
+    return 1.0
 
 
 class DiscordRateLimited(RuntimeError):
     """A Discord route bucket is unavailable until its exact retry deadline."""
 
     def __init__(self, retry_after: float) -> None:
-        self.retry_after = max(0.0, float(retry_after))
+        value = float(retry_after)
+        self.retry_after = min(value, MAX_RETRY_AFTER_SECONDS) if math.isfinite(value) and value > 0 else 1.0
         super().__init__(f"Discord rate limited for {self.retry_after:.3f} seconds")
 
 
@@ -117,12 +135,7 @@ class DiscordClient:
         if 200 <= status < 300:
             return body
         if status == 429:
-            raw_delay = headers.get("Retry-After") or body.get("retry_after") or 1
-            try:
-                retry_after = float(raw_delay)
-            except (TypeError, ValueError):
-                retry_after = 1.0
-            raise DiscordRateLimited(retry_after)
+            raise DiscordRateLimited(_retry_after_seconds(headers, body))
         raise RuntimeError(f"Discord API {method} {path} failed with HTTP {status}")
 
     def get_channel(self, channel_id: str) -> dict[str, Any]:
