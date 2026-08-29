@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "overlay" / "scripts" / "collective_automation_core.py"
 POLLER = ROOT / "overlay" / "scripts" / "collective_composio_poller.py"
 NEWS = ROOT / "overlay" / "scripts" / "collective_news_digest.py"
+RECON = ROOT / "overlay" / "scripts" / "collective_discord_reconcile.py"
 PLUGIN = ROOT / "overlay" / "hermes" / "plugins" / "platforms" / "discord" / "agk_collective_membership.py"
 
 
@@ -295,3 +296,15 @@ def test_command_reconciler_is_exact_and_fail_closed():
     assert "--apply" in script
     assert "retry_after" in script
     assert "retry budget exhausted" in script
+
+
+def test_sign_card_reconciler_removes_reaction_consent_and_versions_v2():
+    reconcile = load(RECON, "collective_reconcile_card")
+    components = [{"type": 17, "components": [{"type": 10, "content": "Three steps, or react **✅**. **✅ also signs.** partnerships-v1-2026-08-24"}, {"type": 1, "components": [{"type": 2, "custom_id": "sign_house"}, {"type": 2, "custom_id": "sign_deals"}, {"type": 2, "custom_id": "sign_conduct"}]}]}]
+    updated = reconcile.canonical_sign_components(components)
+    raw = json.dumps(updated, ensure_ascii=False)
+    assert "✅ also signs" not in raw
+    assert "does **not** sign" in raw
+    assert "partnerships-v2-2026-08-29" in raw
+    assert components[0]["components"][0]["content"].startswith("Three steps, or react")
+    assert reconcile.canonical_sign_components(updated) == updated

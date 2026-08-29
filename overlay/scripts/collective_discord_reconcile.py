@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import time
@@ -13,8 +14,24 @@ from pathlib import Path
 API = "https://discord.com/api/v10"
 APP_ID = "1541131574509314209"
 GUILD_ID = "1350170767366688830"
+START_CHANNEL = "1541213937096458391"
+SIGN_MESSAGE = "1541725051248713808"
 REQUIRED_GLOBAL = {"collective", "panel", "clear"}
 STALE_GUILD = {"upgrade", "billing", "profile", "opportunities", "learn", "today", "ship", "kudos", "board", "win", "pair", "streak", "deal"}
+SIGN_COPY = """Three explicit steps. Everyone signs. No grandfathering for new terms.
+
+**1 · House rules** — read and confirm.
+**2 · Deals & referrals** — confirm the 5 / 15 / 80 snapshot and no-bypass rule.
+**3 · Sign I ACCEPT** — enter your name and type the exact phrase. Then <@&1541225509940109322> lands.
+
+A ✅ reaction does **not** sign. It privately redirects you to this explicit flow.
+We retain your Discord ID, the terms version, UTC timestamps and a one-way hash of the entered name. The legal name itself is not stored in this runtime.
+
+**Signed** opens COLLECTIVE.
+**Pro** unlocks LEARN · BUILD · EARN.
+
+Launch: **COLLECTIVE70** = −70% first month. Checkout: paste your Discord ID.
+-# partnerships-v2-2026-08-29 · explicit modal consent"""
 
 
 def load_token() -> str:
@@ -28,11 +45,14 @@ def load_token() -> str:
     raise RuntimeError("Collective Discord credential unavailable")
 
 
-def request(method: str, path: str, token: str):
+def request(method: str, path: str, token: str, body=None):
     headers = {"Authorization": "Bot " + token, "User-Agent": "DiscordBot (https://github.com/agentik-os, 1.0)"}
+    data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+    if data is not None:
+        headers["Content-Type"] = "application/json"
     for attempt in range(8):
         try:
-            with urllib.request.urlopen(urllib.request.Request(API + path, method=method, headers=headers), timeout=30) as response:
+            with urllib.request.urlopen(urllib.request.Request(API + path, data=data, method=method, headers=headers), timeout=30) as response:
                 raw = response.read()
                 return json.loads(raw.decode() or "{}") if raw else {}
         except urllib.error.HTTPError as error:
@@ -46,6 +66,45 @@ def request(method: str, path: str, token: str):
                 continue
             raise RuntimeError(f"Discord {method} {path} failed HTTP {error.code}") from error
     raise RuntimeError("Discord command reconciliation retry budget exhausted")
+
+
+def canonical_sign_components(components):
+    value = copy.deepcopy(components)
+    matches = 0
+    custom_ids = set()
+    def walk(items):
+        nonlocal matches
+        for item in items or []:
+            custom_id = item.get("custom_id")
+            if custom_id:
+                custom_ids.add(str(custom_id))
+            content = str(item.get("content") or "")
+            if item.get("type") == 10 and (content == SIGN_COPY or "Three steps" in content or "✅ also signs" in content or "partnerships-v1-2026-08-24" in content):
+                item["content"] = SIGN_COPY
+                matches += 1
+            walk(item.get("components"))
+    walk(value)
+    if matches != 1:
+        raise RuntimeError("Collective sign card copy target is ambiguous")
+    if not {"sign_house", "sign_deals", "sign_conduct"}.issubset(custom_ids):
+        raise RuntimeError("Collective sign card custom IDs changed unexpectedly")
+    return value
+
+
+def reconcile_sign_card(token: str, apply: bool) -> dict:
+    path = f"/channels/{START_CHANNEL}/messages/{SIGN_MESSAGE}"
+    before = request("GET", path, token)
+    if str((before.get("author") or {}).get("id")) != APP_ID or not (int(before.get("flags") or 0) & 32768):
+        raise RuntimeError("Collective sign card identity or V2 flags mismatch")
+    desired = canonical_sign_components(before.get("components") or [])
+    changed = desired != (before.get("components") or [])
+    if apply and changed:
+        request("PATCH", path, token, {"components": desired, "flags": 32768})
+    reread = request("GET", path, token)
+    expected = desired if apply else (before.get("components") or [])
+    if apply and reread.get("components") != expected:
+        raise RuntimeError("Collective sign card readback mismatch")
+    return {"changed": changed, "applied": bool(apply and changed), "message_id": SIGN_MESSAGE}
 
 
 def reconcile(apply: bool) -> dict:
@@ -71,7 +130,8 @@ def reconcile(apply: bool) -> dict:
     remaining = sorted(str(item.get("name")) for item in reread)
     if apply and remaining:
         raise RuntimeError("Guild command reconciliation readback is not empty")
-    return {"apply": apply, "global_required_present": True, "guild_before": sorted(str(item.get("name")) for item in guild_commands), "removed": sorted(removed), "guild_after": remaining}
+    sign_card = reconcile_sign_card(token, apply)
+    return {"apply": apply, "global_required_present": True, "guild_before": sorted(str(item.get("name")) for item in guild_commands), "removed": sorted(removed), "guild_after": remaining, "sign_card": sign_card}
 
 
 def main() -> int:
