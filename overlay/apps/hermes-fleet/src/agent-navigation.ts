@@ -11,3 +11,11 @@ export function agentManageRoute(
   const params = new URLSearchParams({ profile });
   return `${dashboardPath(organisation)}profiles?${params.toString()}`;
 }
+
+export function agentDiscordRoute(
+  organisation: OrganisationId,
+  profile: string,
+): string {
+  const params = new URLSearchParams({ profile });
+  return `${dashboardPath(organisation)}channels?${params.toString()}`;
+}

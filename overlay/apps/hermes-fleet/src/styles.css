@@ -170,10 +170,10 @@ button { color: inherit; }
 .agent-station-header > div { display: flex; align-items: baseline; gap: 8px; }
 .agent-station-header h2 { margin: 0; color: var(--text-2); font-size: 11px; font-weight: 590; text-transform: capitalize; }
 .agent-station-header span { color: var(--subtle); font-size: 8px; }
-.setup-action, .agent-manage { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); color: var(--text-2); cursor: pointer; }
+.setup-action, .agent-manage, .agent-discord { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); color: var(--text-2); cursor: pointer; }
 .setup-action { padding: 0 11px; font-size: 9px; }
-.agent-manage { min-width: 58px; margin-left: 4px; padding: 0 8px; font-size: 8px; }
-.setup-action:hover, .agent-manage:hover { border-color: rgba(255,255,255,.15); background: var(--surface-2); color: var(--text); }
+.agent-manage, .agent-discord { min-width: 58px; margin-left: 4px; padding: 0 8px; font-size: 8px; }
+.setup-action:hover, .agent-manage:hover, .agent-discord:hover { border-color: rgba(255,255,255,.15); background: var(--surface-2); color: var(--text); }
 .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 8px; }
 .agent-card { display: grid; min-height: 138px; grid-template-rows: auto 1fr auto; padding: 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .agent-card header { display: grid; grid-template-columns: 30px minmax(0, 1fr) 7px; align-items: center; gap: 8px; }

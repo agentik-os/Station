@@ -27,7 +27,7 @@ import {
   renderTargetFor,
   type FleetRenderReason,
 } from "./refresh-policy";
-import { agentManageRoute, agentSetupRoute } from "./agent-navigation";
+import { agentDiscordRoute, agentManageRoute, agentSetupRoute } from "./agent-navigation";
 
 const appElement = document.querySelector<HTMLDivElement>("#app");
 if (!appElement) throw new Error("Application root is missing");
@@ -179,6 +179,15 @@ function bindAgentControls(): void {
       const profile = button.dataset.agentManage ?? "";
       if (profile && ORGANISATIONS.some((item) => item.id === id)) {
         openHermesRoute(id, agentManageRoute(id, profile));
+      }
+    });
+  }
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-agent-discord]")) {
+    button.addEventListener("click", () => {
+      const id = button.dataset.agentOrganisation as OrganisationId;
+      const profile = button.dataset.agentDiscord ?? "default";
+      if (ORGANISATIONS.some((item) => item.id === id)) {
+        openHermesRoute(id, agentDiscordRoute(id, profile));
       }
     });
   }

@@ -46,6 +46,7 @@ describe("Fleet views", () => {
     expect(html).not.toContain("Specialist 01");
     expect(html).toContain('data-agent-setup="agentik"');
     expect(html).toContain('data-agent-manage="agk-architect"');
+    expect(html).toContain('data-agent-discord="agk-architect"');
   });
 
   it("renders canonical session titles and profile names", () => {
