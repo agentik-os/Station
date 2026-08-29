@@ -243,11 +243,27 @@ install -m 0755 "$repo_root/scripts/install-hermes-fleet-dashboard.sh" \
   "$install_root/scripts/install-hermes-fleet-dashboard.sh"
 install -m 0755 "$repo_root/scripts/github_stars_forum_watcher.py" \
   "$install_root/scripts/github_stars_forum_watcher.py"
+install -m 0644 "$repo_root/scripts/collective_automation_core.py" \
+  "$install_root/scripts/collective_automation_core.py"
+install -m 0755 "$repo_root/scripts/collective_composio_poller.py" \
+  "$install_root/scripts/collective_composio_poller.py"
+install -m 0755 "$repo_root/scripts/collective_news_digest.py" \
+  "$install_root/scripts/collective_news_digest.py"
+install -m 0755 "$repo_root/scripts/collective_discord_reconcile.py" \
+  "$install_root/scripts/collective_discord_reconcile.py"
 install -d -m 0755 "$install_root/systemd"
 install -m 0644 "$repo_root/systemd/agk-github-stars-forum.service" \
   "$install_root/systemd/agk-github-stars-forum.service"
 install -m 0644 "$repo_root/systemd/agk-github-stars-forum.timer" \
   "$install_root/systemd/agk-github-stars-forum.timer"
+for unit in \
+  agk-collective-composio.service \
+  agk-collective-composio.timer \
+  agk-collective-news.service \
+  agk-collective-news.timer
+do
+  install -m 0644 "$repo_root/systemd/$unit" "$install_root/systemd/$unit"
+done
 install -m 0644 "$repo_root/config/topology.yaml" "$install_root/config/topology.yaml"
 install -m 0644 "$repo_root/config/providers.yaml" "$install_root/config/providers.yaml"
 install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"
@@ -303,6 +319,9 @@ if ! "$install_root/venv/bin/python" -c 'import yaml' >/dev/null 2>&1; then
 fi
 
 if [ "$system_install" = true ]; then
+  if [ -x "$install_root/bin/composio" ]; then
+    install -m 0755 "$install_root/bin/composio" /usr/local/bin/composio
+  fi
   install -m 0644 "$repo_root/rmux/rmux.conf" /etc/rmux.conf
   install -d -m 0755 /etc/agk-terminal
   install -m 0644 "$repo_root/config/topology.yaml" /etc/agk-terminal/topology.yaml

@@ -1,0 +1,10 @@
+[Unit]
+Description=Publish one AGK News digest each weekday
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:30:00 Europe/Madrid
+Persistent=true
+Unit=agk-collective-news.service
+
+[Install]
+WantedBy=timers.target

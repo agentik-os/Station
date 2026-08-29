@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AGK Collective Stripe and Typeform reconciliation every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=agk-collective-composio.service
+
+[Install]
+WantedBy=timers.target
