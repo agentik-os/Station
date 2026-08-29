@@ -27,6 +27,7 @@ import {
   renderTargetFor,
   type FleetRenderReason,
 } from "./refresh-policy";
+import { agentManageRoute, agentSetupRoute } from "./agent-navigation";
 
 const appElement = document.querySelector<HTMLDivElement>("#app");
 if (!appElement) throw new Error("Application root is missing");
@@ -46,6 +47,7 @@ let activeId = resolveOrganisationId(
   window.localStorage.getItem(STORAGE_KEY),
 );
 let activeView: FleetView = "overview";
+let hermesRoute = "";
 let snapshot: FleetSnapshot | null = null;
 let refreshTimer: number | null = null;
 let refreshController: AbortController | null = null;
@@ -74,7 +76,7 @@ function renderView(): string {
     return `<div class="error-state"><span>!</span><strong>Snapshot indisponible</strong><p>${errorMessage}</p><button type="button" data-retry>Réessayer</button></div>`;
   }
   if (activeView === "hermes") {
-    return `<section class="hermes-stage"><iframe title="Hermes ${activeId}" src="${dashboardPath(activeId)}"></iframe></section>`;
+    return `<section class="hermes-stage"><iframe title="Hermes ${activeId}" src="${hermesRoute || dashboardPath(activeId)}"></iframe></section>`;
   }
   if (activeView === "kanban") return renderKanban(stations, global);
   if (activeView === "os") return renderOperatingSystems(stations, global);
@@ -107,7 +109,7 @@ function shellTemplate(): string {
           <div class="workspace-actions">
             <span class="freshness" data-freshness>${snapshot ? "Synchronisé" : "Connexion…"}</span>
             <button type="button" class="icon-action" data-refresh title="Actualiser" aria-label="Actualiser">↻</button>
-            <a class="open-action" href="${dashboardPath(activeId)}" target="_blank" rel="noopener noreferrer">Hermes ↗</a>
+            <a class="open-action" href="${hermesRoute || dashboardPath(activeId)}" target="_blank" rel="noopener noreferrer">Hermes ↗</a>
           </div>
         </header>
         ${activeId === "operator" ? `<div class="operator-banner"><span>Operator global</span><p>Vue redacted consolidée des quatre stations. Les prompts, messages, secrets et chemins privés ne quittent jamais leur frontière.</p></div>` : ""}
@@ -130,6 +132,7 @@ function renderContent(): void {
   app.querySelector<HTMLButtonElement>("[data-retry]")?.addEventListener("click", () => {
     void refreshSnapshot("manual");
   });
+  bindAgentControls();
 }
 
 function renderStatus(): void {
@@ -141,6 +144,7 @@ function renderStatus(): void {
 
 function selectView(view: FleetView): void {
   activeView = view;
+  if (view === "hermes") hermesRoute = "";
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-view]")) {
     button.classList.toggle("is-active", button.dataset.view === activeView);
   }
@@ -149,6 +153,35 @@ function selectView(view: FleetView): void {
     breadcrumb.textContent = VIEW_LABELS.find((item) => item.id === activeView)?.label ?? "Overview";
   }
   renderContent();
+}
+
+function openHermesRoute(organisation: OrganisationId, route: string): void {
+  activeId = organisation;
+  activeView = "hermes";
+  hermesRoute = route;
+  window.localStorage.setItem(STORAGE_KEY, organisation);
+  window.history.replaceState({}, "", withOrganisation(window.location.search, organisation));
+  renderShell();
+}
+
+function bindAgentControls(): void {
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-agent-setup]")) {
+    button.addEventListener("click", () => {
+      const id = button.dataset.agentSetup as OrganisationId;
+      if (ORGANISATIONS.some((item) => item.id === id)) {
+        openHermesRoute(id, agentSetupRoute(id));
+      }
+    });
+  }
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-agent-manage]")) {
+    button.addEventListener("click", () => {
+      const id = button.dataset.agentOrganisation as OrganisationId;
+      const profile = button.dataset.agentManage ?? "";
+      if (profile && ORGANISATIONS.some((item) => item.id === id)) {
+        openHermesRoute(id, agentManageRoute(id, profile));
+      }
+    });
+  }
 }
 
 function bindInteractions(): void {
@@ -160,6 +193,7 @@ function bindInteractions(): void {
       const id = button.dataset.organisation as OrganisationId;
       if (!ORGANISATIONS.some((item) => item.id === id)) return;
       activeId = id;
+      hermesRoute = "";
       snapshot = null;
       errorMessage = "";
       loading = true;
@@ -169,6 +203,7 @@ function bindInteractions(): void {
       void refreshSnapshot("organisation");
     });
   }
+  bindAgentControls();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
     void refreshSnapshot("manual");
   });

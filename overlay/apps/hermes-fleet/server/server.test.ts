@@ -173,6 +173,7 @@ describe("Fleet request boundaries", () => {
 
       const privateResult = await httpGet(port, "/api/fleet-snapshot?org=private", {
         host: "fleet.test",
+        "tailscale-user-login": "owner@example.com",
       });
       expect(privateResult.status).toBe(200);
       expect(Object.keys(JSON.parse(privateResult.body).organisations)).toEqual([
@@ -180,6 +181,11 @@ describe("Fleet request boundaries", () => {
       ]);
       expect(privateResult.body).not.toContain("Global ops");
       expect(privateResult.body).not.toContain("Private goal");
+
+      const privateDenied = await httpGet(port, "/api/fleet-snapshot?org=private", {
+        host: "fleet.test",
+      });
+      expect(privateDenied.status).toBe(403);
 
       const unknown = await httpGet(port, "/api/fleet-snapshot?org=unknown", {
         host: "fleet.test",

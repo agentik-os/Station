@@ -126,13 +126,19 @@ export function renderOperatingSystems(stations: FleetStation[], global: boolean
 }
 
 export function renderAgents(stations: FleetStation[], global: boolean): string {
-  const rows = stations.flatMap((station) => station.agents.map((agent) => ({ station, agent })));
-  return `<section class="page-heading compact"><div><span class="eyebrow">Workforce</span><h1>Agents spécialisés</h1><p>Rôles, profils Hermes et bindings OS sans perte d’espace.</p></div></section><div class="agent-grid">${rows.length ? rows.map(({ station, agent }) => {
-    const ready = Boolean(agent.ready);
-    const name = textValue(agent, "name");
-    const profile = textValue(agent, "profile") || "default";
-    return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="health-dot ${ready ? "is-online" : "is-offline"}"></span></header><p>${escapeHtml(textValue(agent, "description"))}</p><footer>${stationBadge(station, global)}<span>${escapeHtml(profile)}</span><code>v${escapeHtml(textValue(agent, "version"))}</code></footer></article>`;
-  }).join("") : emptyState("Aucun agent spécialisé autorisé pour cette station.")}</div>`;
+  const groups = stations.map((station) => {
+    const cards = station.agents.map((agent) => {
+      const ready = Boolean(agent.ready);
+      const name = textValue(agent, "name");
+      const profile = textValue(agent, "profile") || "default";
+      const manage = profile !== "default"
+        ? `<button type="button" class="agent-manage" data-agent-manage="${escapeHtml(profile)}" data-agent-organisation="${escapeHtml(station.id)}">Gérer</button>`
+        : "";
+      return `<article class="agent-card"><header><span class="agent-avatar">${escapeHtml(name.slice(0, 2).toUpperCase())}</span><div><strong>${escapeHtml(name)}</strong><small>${escapeHtml(textValue(agent, "id"))}</small></div><span class="health-dot ${ready ? "is-online" : "is-offline"}"></span></header><p>${escapeHtml(textValue(agent, "description"))}</p><footer>${stationBadge(station, global)}<span>${escapeHtml(profile)}</span><code>v${escapeHtml(textValue(agent, "version"))}</code>${manage}</footer></article>`;
+    }).join("");
+    return `<section class="agent-station" data-station="${escapeHtml(station.id)}"><header class="agent-station-header"><div><h2>${escapeHtml(station.id)}</h2><span>${station.agents.length} agent(s)</span></div><button type="button" class="setup-action" data-agent-setup="${escapeHtml(station.id)}">Nouvel agent</button></header><div class="agent-grid">${cards || emptyState("Aucun agent configuré pour cette station.")}</div></section>`;
+  }).join("");
+  return `<section class="page-heading compact"><div><span class="eyebrow">Workforce</span><h1>Agents</h1><p>Noms canoniques, profils Hermes et bindings OS. Créez et configurez un agent sans quitter Fleet.</p></div></section><div class="agent-stations">${groups || emptyState("Aucun agent autorisé.")}</div>`;
 }
 
 export function renderSessions(stations: FleetStation[], global: boolean): string {

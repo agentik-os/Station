@@ -25,6 +25,13 @@ ORGANISATIONS = ("operator", "agentik", "mission", "private")
 STATUSES = ("triage", "todo", "scheduled", "ready", "running", "review", "blocked", "done")
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,119}$")
 TERMINAL_RUNTIME_STATUSES = {"archived", "completed", "failed", "stopped", "cancelled"}
+_PROFILE_NAME_OVERRIDES = {
+    "agk": "AGK", "os": "OS", "vat": "VAT", "youtube": "YouTube",
+    "oto100m": "OTO100M",
+}
+_PROFILE_DISPLAY_OVERRIDES = {
+    "clientdentistrygptee881c": "DentistryGPT Client",
+}
 
 
 def _text(value: Any, limit: int = 240) -> str:
@@ -34,6 +41,27 @@ def _text(value: Any, limit: int = 240) -> str:
 def _safe_id(value: Any) -> str:
     candidate = _text(value, 120).lower()
     return candidate if _ID.fullmatch(candidate) else ""
+
+
+def _canonical_profile_name(profile_id: str) -> str:
+    if profile_id in _PROFILE_DISPLAY_OVERRIDES:
+        return _PROFILE_DISPLAY_OVERRIDES[profile_id]
+    return " ".join(
+        _PROFILE_NAME_OVERRIDES.get(part, part.title())
+        for part in profile_id.split("-") if part
+    )
+
+
+def _profile_metadata(profile_dir: Path, profile_id: str) -> tuple[str, str]:
+    try:
+        raw = yaml.safe_load((profile_dir / "profile.yaml").read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    name = _text(raw.get("display_name"), 160) or _canonical_profile_name(profile_id)
+    description = _text(raw.get("description"), 320)
+    return name, description
 
 
 def _connect(path: Path) -> sqlite3.Connection | None:
@@ -153,7 +181,7 @@ def _sessions(hermes: Path) -> list[dict[str, Any]]:
     try:
         columns = _columns(connection, "sessions")
         wanted = _select_existing(columns, (
-            "id", "title", "source", "model", "started_at", "ended_at",
+            "id", "title", "display_name", "parent_session_id", "source", "model", "started_at", "ended_at",
             "last_activity_at", "message_count", "tool_call_count", "archived",
             "hidden", "profile_name",
         ))
@@ -169,17 +197,57 @@ def _sessions(hermes: Path) -> list[dict[str, Any]]:
         rows = connection.execute(
             f"SELECT {', '.join(wanted)} FROM sessions{where} ORDER BY {order} DESC LIMIT 80"
         ).fetchall()
+        parent_ids = {
+            _safe_id(row["parent_session_id"])
+            for row in rows if "parent_session_id" in row.keys() and row["parent_session_id"]
+        }
+        parent_titles: dict[str, str] = {}
+        if parent_ids:
+            parent_columns = ["id"]
+            if "title" in columns:
+                parent_columns.append("title")
+            if "display_name" in columns:
+                parent_columns.append("display_name")
+            placeholders = ",".join("?" for _ in parent_ids)
+            for parent in connection.execute(
+                f"SELECT {', '.join(parent_columns)} FROM sessions WHERE id IN ({placeholders})",
+                tuple(sorted(parent_ids)),
+            ).fetchall():
+                parent_id = _safe_id(parent["id"])
+                parent_title = (
+                    _text(parent["title"], 180) if "title" in parent.keys() else ""
+                ) or (
+                    _text(parent["display_name"], 180) if "display_name" in parent.keys() else ""
+                )
+                if parent_id and parent_title:
+                    parent_titles[parent_id] = parent_title
         result = []
         for row in rows:
             session_id = _safe_id(row["id"])
             if not session_id:
                 continue
+            source = _text(row["source"], 40)
+            profile = _safe_id(row["profile_name"]) if "profile_name" in row.keys() else ""
+            title = (_text(row["title"], 180) if "title" in row.keys() else "") or (
+                _text(row["display_name"], 180) if "display_name" in row.keys() else ""
+            )
+            parent_id = _safe_id(row["parent_session_id"]) if "parent_session_id" in row.keys() else ""
+            source_label = {
+                "subagent": "Subagent", "cron": "Cron", "discord": "Discord",
+                "cli": "CLI", "tool": "Tool session",
+            }.get(source, source.title() or "Hermes session")
+            if not title and parent_id in parent_titles:
+                title = f"{source_label} · {parent_titles[parent_id]}"
+            if not title:
+                started = float(row["started_at"] or 0)
+                timestamp = time.strftime("%d %b %H:%M", time.gmtime(started)) if started else ""
+                title = f"{source_label} · {timestamp}" if timestamp else source_label
             result.append({
                 "id": session_id,
-                "title": _text(row["title"], 180) if "title" in row.keys() else "",
-                "source": _text(row["source"], 40),
+                "title": title,
+                "source": source,
                 "model": _text(row["model"], 100) if "model" in row.keys() else "",
-                "profile": _safe_id(row["profile_name"]) if "profile_name" in row.keys() else "default",
+                "profile": profile or "default",
                 "started_at": float(row["started_at"] or 0),
                 "last_activity_at": float(row["last_activity_at"] or 0) if "last_activity_at" in row.keys() else 0,
                 "active": not bool(row["ended_at"]) if "ended_at" in row.keys() else True,
@@ -270,6 +338,7 @@ def _agents(hermes: Path, organisation: str) -> list[dict[str, Any]]:
             "ready": prompt_present,
         })
     known = {item["id"] for item in result}
+    claimed_profiles = {item["profile"] for item in result if item.get("profile")}
     profiles_root = hermes / "profiles"
     if profiles_root.is_dir() and not profiles_root.is_symlink():
         for profile_dir in sorted(profiles_root.iterdir()):
@@ -277,16 +346,18 @@ def _agents(hermes: Path, organisation: str) -> list[dict[str, Any]]:
             if (
                 not profile_id
                 or profile_id in known
+                or profile_id in claimed_profiles
                 or not profile_dir.is_dir()
                 or profile_dir.is_symlink()
                 or not (profile_dir / "config.yaml").is_file()
             ):
                 continue
+            name, description = _profile_metadata(profile_dir, profile_id)
             result.append({
                 "id": profile_id,
-                "name": profile_id.replace("-", " ").title(),
+                "name": name,
                 "version": "profile",
-                "description": "Profil Hermes spécialisé et isolé pour cette station.",
+                "description": description or f"Profil Hermes {name} isolé pour cette station.",
                 "scope": [organisation],
                 "runtime": "hermes-profile",
                 "profile": profile_id,

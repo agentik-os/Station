@@ -60,9 +60,7 @@ export interface FleetSnapshot {
 function redactCrossBoundaryStation(station: FleetStation): FleetStation {
   return {
     ...station,
-    profiles: (station.profiles ?? []).map((profile, index) =>
-      profile === "default" ? "default" : `specialist-${String(index).padStart(2, "0")}`,
-    ),
+    profiles: [...(station.profiles ?? [])],
     kanban: {
       ...station.kanban,
       tasks: (station.kanban.tasks ?? []).map((task) => ({
@@ -73,26 +71,22 @@ function redactCrossBoundaryStation(station: FleetStation): FleetStation {
         project_id: "",
       })),
     },
-    sessions: (station.sessions ?? []).map((session) => ({
-      ...session,
-      title: `Session ${String(session.id ?? "").slice(0, 10)}`,
-      profile: session.profile === "default" ? "default" : "specialist",
-    })),
+    sessions: (station.sessions ?? []).map((session) => ({ ...session })),
     runtimes: (station.runtimes ?? []).map((runtime) => ({
       ...runtime,
       name: `Runtime ${String(runtime.id ?? "").slice(0, 10)}`,
       profile: "",
     })),
-    agents: (station.agents ?? []).map((agent, index) => ({
-      id: agent.runtime === "hermes-profile" ? `specialist-${String(index + 1).padStart(2, "0")}` : agent.id,
-      name: agent.runtime === "hermes-profile" ? `Specialist ${String(index + 1).padStart(2, "0")}` : agent.name,
+    agents: (station.agents ?? []).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
       version: agent.version,
       runtime: agent.runtime,
       ready: agent.ready,
-      description: "Spécialiste Hermes isolé.",
-      profile: "",
-      scope: [],
-      os: [],
+      description: agent.description,
+      profile: agent.profile,
+      scope: agent.scope,
+      os: agent.os,
     })),
     os: (station.os ?? []).map((operatingSystem) => ({
       id: operatingSystem.id,

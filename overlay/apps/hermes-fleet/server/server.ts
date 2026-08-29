@@ -334,14 +334,12 @@ async function serveFleetSnapshot(
     sendJson(response, 400, { error: "Unknown organisation" });
     return;
   }
-  if (organisation === "operator") {
-    const loginHeader = request.headers["tailscale-user-login"];
-    const login = (Array.isArray(loginHeader) ? loginHeader[0] : loginHeader)
-      ?.trim().toLowerCase();
-    if (!login || !operatorLogins.has(login)) {
-      sendJson(response, 403, { error: "Operator identity required" });
-      return;
-    }
+  const loginHeader = request.headers["tailscale-user-login"];
+  const login = (Array.isArray(loginHeader) ? loginHeader[0] : loginHeader)
+    ?.trim().toLowerCase();
+  if (!login || !operatorLogins.has(login)) {
+    sendJson(response, 403, { error: "Owner identity required" });
+    return;
   }
   try {
     const payload = JSON.parse(await readFile(snapshotPath, "utf8")) as FleetSnapshot;

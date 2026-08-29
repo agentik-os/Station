@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { renderKanban, renderStationOverview } from "./views.js";
+import { renderAgents, renderKanban, renderSessions, renderStationOverview } from "./views.js";
 import type { FleetStation } from "./fleet-snapshot.js";
 
 const station: FleetStation = {
@@ -34,5 +34,28 @@ describe("Fleet views", () => {
     expect(html).toContain("Bloqué");
     expect(html).toContain("Ship &lt;script&gt;");
     expect(html).toContain("builder");
+  });
+
+  it("renders canonical agent names with setup and management controls", () => {
+    const withAgents: FleetStation = {
+      ...station,
+      agents: [{ id: "agk-architect", name: "AGK Architect", description: "Designs AGK systems", profile: "agk-architect", version: "profile", runtime: "hermes-profile", ready: true }],
+    };
+    const html = renderAgents([withAgents], false);
+    expect(html).toContain("AGK Architect");
+    expect(html).not.toContain("Specialist 01");
+    expect(html).toContain('data-agent-setup="agentik"');
+    expect(html).toContain('data-agent-manage="agk-architect"');
+  });
+
+  it("renders canonical session titles and profile names", () => {
+    const withSessions: FleetStation = {
+      ...station,
+      sessions: [{ id: "session-1", title: "Brand review", profile: "brand-guardian", source: "discord", model: "gpt-5.6-sol", last_activity_at: 2, active: true }],
+    };
+    const html = renderSessions([withSessions], false);
+    expect(html).toContain("Brand review");
+    expect(html).toContain("brand-guardian");
+    expect(html).not.toContain("Session session-1");
   });
 });
