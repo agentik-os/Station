@@ -87,6 +87,8 @@ fi
 hermes config set stt.enabled true >/dev/null
 hermes config set stt.echo_transcripts true >/dev/null
 hermes config set stt.provider local >/dev/null
+# Keep the high-accuracy default for non-conversational profiles. Agentik uses
+# the smaller hot model below because live voice latency matters more there.
 hermes config set stt.local.model large-v3 >/dev/null
 hermes config set stt.language '' >/dev/null
 hermes config set stt.local.language '' >/dev/null
@@ -95,10 +97,14 @@ hermes config set stt.local.compute_type int8 >/dev/null
 hermes config set stt.local.vad true >/dev/null
 hermes config set stt.prompt 'AGK, Agentik, Hermes, Gareth, Operator, Mission, Private, RMUX, Discord, Codex' >/dev/null
 if [ "$(id -un)" = "agentik" ] && [ "$hermes_home" = "/home/agentik/.hermes" ]; then
-  # Natural neural French voice for the conversational Agentik surface. Edge
-  # TTS is free at use time; Piper remains installed for offline rollback.
+  # The hot small model removes the ~18s CPU transcription regression seen with
+  # large-v3 while retaining automatic French/English language detection.
+  hermes config set stt.local.model small >/dev/null
+  # Natural neural bilingual voices for the conversational Agentik surface.
+  # Edge TTS is free at use time; Piper remains installed for offline rollback.
   hermes config set tts.provider edge >/dev/null
   hermes config set tts.edge.voice fr-FR-HenriNeural >/dev/null
+  hermes config set tts.edge.auto_language_voices '{"fr":"fr-FR-HenriNeural","en":"en-US-AndrewMultilingualNeural"}' >/dev/null
 else
   hermes config set tts.provider piper >/dev/null
   hermes config set tts.piper.voice fr_FR-siwis-medium >/dev/null
