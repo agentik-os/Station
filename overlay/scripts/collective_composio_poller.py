@@ -17,6 +17,8 @@ from typing import Any
 
 from collective_automation_core import (
     CollectiveStore,
+    DISCORD_ID,
+    EXPECTED_PAYMENT_LINK,
     map_deal_response,
     map_intro_response,
     map_paid_checkout,
@@ -196,6 +198,13 @@ def stripe_line_items(session_id: str) -> list[dict[str, Any]]:
 
 def mapped_checkout(session: dict[str, Any]):
     if session.get("payment_status") != "paid" or session.get("status") != "complete":
+        return None
+    if session.get("payment_link") != EXPECTED_PAYMENT_LINK or session.get("mode") != "subscription" or session.get("currency") != "eur":
+        return None
+    if not isinstance(session.get("amount_total"), int) or session["amount_total"] <= 0:
+        return None
+    discord_id = str(session.get("client_reference_id") or (session.get("metadata") or {}).get("discord_id") or "")
+    if not DISCORD_ID.fullmatch(discord_id):
         return None
     session_id = str(session.get("id") or "")
     if not session_id:
