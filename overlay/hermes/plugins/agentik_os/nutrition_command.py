@@ -12,13 +12,31 @@ from pathlib import Path
 
 OS_REF = "nutrition-os@1.0.1"
 PACKAGE = Path("/opt/agentik/os-registry/packages/nutrition-os/1.0.1")
-OPERATOR_ASSIGNMENTS = Path("/etc/agentik/operator-os/assignments.yaml")
+PROFILE = Path("/home/private/.hermes/profiles/nutrition-os")
 
 
 def _core():
+    package = PACKAGE.absolute()
+    if package.is_symlink() or package.resolve() != package or not package.is_dir():
+        raise RuntimeError("Nutrition OS package root is unsafe")
+    manifest_path = PACKAGE / "MANIFEST.json"
     path = PACKAGE / "functions/nutrition_ops.py"
-    if not path.is_file():
-        raise RuntimeError("Nutrition OS package is not installed")
+    for candidate in (manifest_path, path):
+        if candidate.is_symlink() or not candidate.is_file() or not candidate.resolve().is_relative_to(package):
+            raise RuntimeError("Nutrition OS package file is unsafe")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Nutrition OS manifest cannot be validated") from exc
+    expected_id, expected_version = OS_REF.split("@", 1)
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("id") != expected_id
+        or manifest.get("version") != expected_version
+        or manifest.get("entrypoint") != "functions/nutrition_ops.py"
+    ):
+        raise RuntimeError("Nutrition OS package identity does not match the command contract")
+
     spec = importlib.util.spec_from_file_location("agk_nutrition_core", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Nutrition OS entrypoint cannot be loaded")
@@ -28,15 +46,17 @@ def _core():
 
 
 def _paths() -> tuple[Path, Path]:
-    root = Path("/home/operator/.hermes/profiles/nutrition/data/nutrition-os")
+    root = Path("/home/private/.hermes/profiles/nutrition-os/data/nutrition-os")
     return root / "state.json", root / ".lock"
 
 
 def _active() -> bool:
     import yaml
     hermes_home = Path(os.environ.get("HERMES_HOME", "")).resolve() if os.environ.get("HERMES_HOME") else None
-    dedicated_profile = Path("/home/operator/.hermes/profiles/nutrition").resolve()
-    path = OPERATOR_ASSIGNMENTS if (Path.home() == Path("/home/operator") or hermes_home == dedicated_profile) else Path.home() / ".agentik/os-assignments.yaml"
+    dedicated_profile = Path("/home/private/.hermes/profiles/nutrition-os").resolve()
+    if hermes_home == dedicated_profile and (dedicated_profile / "config.yaml").is_file():
+        return True
+    path = Path.home() / ".agentik/os-assignments.yaml"
     try:
         records = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("assignments", [])
     except OSError:
