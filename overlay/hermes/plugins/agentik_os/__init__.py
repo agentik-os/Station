@@ -19,6 +19,8 @@ from .completion import (
     completion_available,
     completion_prompt,
     handle_completion,
+    record_applied_plan,
+    require_plan_before_work,
 )
 
 
@@ -84,10 +86,13 @@ def register(ctx) -> None:
         schema=AGK_COMPLETION_TOOL_SCHEMA,
         handler=handle_completion,
         check_fn=completion_available,
+        is_async=True,
         description="Persistent prompt, requirement, artifact, evidence and completion-gate graph.",
         emoji="✓",
     )
     ctx.register_hook("pre_llm_call", archive_before_execution)
+    ctx.register_hook("pre_tool_call", require_plan_before_work)
+    ctx.register_hook("post_tool_call", record_applied_plan)
     ctx.register_system_prompt_section(
         "agentik.agent-router",
         agent_router_prompt,

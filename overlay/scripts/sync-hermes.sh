@@ -50,6 +50,28 @@ hermes config set platforms.telegram.gateway_restart_notification false >/dev/nu
 # Keep Discord's stable surface small; evolving actions (including session
 # resume) live inside registry-driven Views and therefore need no slash resync.
 hermes config set platforms.discord.extra.command_ui_mode ui_only >/dev/null
+# Messaging is an attention surface, not terminal scrollback. Non-trivial turns
+# project their canonical todo plan into one persistent editable Station action
+# message on Discord and Telegram. Small tool/interim/heartbeat chatter stays
+# silent. The normal final response remains a fresh terminal message and the
+# meaningful completion notification.
+hermes config set display.platforms.discord.tool_progress off >/dev/null
+hermes config set display.platforms.discord.tool_progress_grouping accumulate >/dev/null
+hermes config set display.platforms.discord.interim_assistant_messages false >/dev/null
+hermes config set display.platforms.discord.long_running_notifications false >/dev/null
+hermes config set display.platforms.discord.busy_ack_detail false >/dev/null
+hermes config set display.platforms.discord.busy_steer_ack_enabled false >/dev/null
+hermes config set display.platforms.discord.streaming false >/dev/null
+hermes config set display.platforms.discord.action_messages true >/dev/null
+hermes config set display.platforms.telegram.tool_progress off >/dev/null
+hermes config set display.platforms.telegram.tool_progress_grouping accumulate >/dev/null
+hermes config set display.platforms.telegram.interim_assistant_messages false >/dev/null
+hermes config set display.platforms.telegram.long_running_notifications false >/dev/null
+hermes config set display.platforms.telegram.busy_ack_detail false >/dev/null
+hermes config set display.platforms.telegram.busy_steer_ack_enabled false >/dev/null
+hermes config set display.platforms.telegram.streaming false >/dev/null
+hermes config set display.platforms.telegram.action_messages true >/dev/null
+hermes config set display.platforms.telegram.notifications important >/dev/null
 if [ "$(id -un)" = "operator" ] && [ "$hermes_home" = "/home/operator/.hermes" ]; then
   hermes config set platforms.discord.extra.session_manager_channel_id 1542462952714670190 >/dev/null
   hermes config set platforms.discord.extra.usage_monitor_channel_id 1542505218569150585 >/dev/null

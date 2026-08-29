@@ -100,6 +100,16 @@ fi
 "$official_dir/venv/bin/hermes" --version
 sudo -u operator "$official_dir/venv/bin/python" --version >/dev/null
 
+# Reapply Station-owned plan projection after every upstream Hermes refresh.
+for core_file in run.py turn_context.py display_config.py station_action_message.py station_noise_policy.py; do
+  install -m 0644 "$install_root/hermes-core/gateway/$core_file" \
+    "$official_dir/gateway/$core_file"
+done
+for progress_file in agent/agent_init.py agent/tool_executor.py run_agent.py; do
+  install -m 0644 "$install_root/hermes-core/$progress_file" \
+    "$official_dir/$progress_file"
+done
+
 # The non-interactive official bootstrap deliberately skips messaging setup.
 # Install the exact Discord versions pinned by Hermes so existing gateway units
 # can reconnect immediately after their configuration is remapped.
@@ -185,15 +195,23 @@ for user_name in "${users[@]}"; do
   done < <(find "$unit_dir" -maxdepth 1 -type f -name 'hermes-*.service' -print0)
 done
 
-for profile_env in /home/*/.hermes/profiles/*/.env; do
-  [ -f "$profile_env" ] || continue
-  owner=$(stat -c %U "$profile_env")
-  python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
-  chown "$owner:$(id -gn "$owner")" "$profile_env"
-  profile_home=$(dirname "$profile_env")
-  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+for profile_config in /home/*/.hermes/profiles/*/config.yaml; do
+  [ -f "$profile_config" ] || continue
+  owner=$(stat -c %U "$profile_config")
+  profile_home=$(dirname "$profile_config")
+  owner_home=$(getent passwd "$owner" | cut -d: -f6)
+  profile_env=$profile_home/.env
+  if [ -f "$profile_env" ]; then
+    python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
+    chown "$owner:$(id -gn "$owner")" "$profile_env"
+  fi
+  # Every named Mission/client/OS profile receives the same plan gate and quiet
+  # Discord/Telegram action-message contract as each base profile.
+  sudo -u "$owner" env HOME="$owner_home" HERMES_HOME="$profile_home" AGK_TERMINAL_ROOT="$install_root" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin:$owner_home/.local/bin" \
+    "$install_root/scripts/sync-hermes.sh"
+  sudo -u "$owner" env HOME="$owner_home" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
     "$official_dir/venv/bin/hermes" config set agent.restart_drain_timeout 1800 >/dev/null
-  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+  sudo -u "$owner" env HOME="$owner_home" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
     "$official_dir/venv/bin/hermes" config set agent.restart_after_turn_timeout 1800 >/dev/null
 done
 

@@ -20,3 +20,89 @@ def test_owner_policy_forbids_decorative_full_message_quote_rails():
 
     assert "Do not wrap ordinary replies in full-message Discord blockquotes (`>>>`)" in prompt
     assert "Do not use colored accent rails as decoration" in prompt
+
+
+def test_sync_persists_quiet_discord_action_message_contract():
+    sync = (ROOT / "overlay/scripts/sync-hermes.sh").read_text()
+    required = {
+        "display.platforms.discord.tool_progress off",
+        "display.platforms.discord.tool_progress_grouping accumulate",
+        "display.platforms.discord.interim_assistant_messages false",
+        "display.platforms.discord.long_running_notifications false",
+        "display.platforms.discord.busy_ack_detail false",
+        "display.platforms.discord.busy_steer_ack_enabled false",
+        "display.platforms.discord.streaming false",
+        "display.platforms.discord.action_messages true",
+    }
+    for setting in required:
+        assert f"hermes config set {setting}" in sync
+    assert 'hermes_home=${HERMES_HOME:-${HOME:?}/.hermes}' in sync
+    assert 'for plugin_path in agentik_os agk_discord_ui_policy platforms/discord' in sync
+    assert 'for agent_source in "$agent_source_root"/*' in sync
+    assert 'agent_target=$hermes_home/agents/$(basename "$agent_source")' in sync
+
+
+def test_sync_persists_quiet_telegram_action_message_contract():
+    sync = (ROOT / "overlay/scripts/sync-hermes.sh").read_text()
+    required = {
+        "display.platforms.telegram.tool_progress off",
+        "display.platforms.telegram.tool_progress_grouping accumulate",
+        "display.platforms.telegram.interim_assistant_messages false",
+        "display.platforms.telegram.long_running_notifications false",
+        "display.platforms.telegram.busy_ack_detail false",
+        "display.platforms.telegram.busy_steer_ack_enabled false",
+        "display.platforms.telegram.streaming false",
+        "display.platforms.telegram.action_messages true",
+        "display.platforms.telegram.notifications important",
+    }
+    for setting in required:
+        assert f"hermes config set {setting}" in sync
+
+
+def test_gateway_projects_station_action_messages_on_discord_and_telegram():
+    gateway = (ROOT / "overlay/hermes-core/gateway/run.py").read_text()
+    assert "source.platform in {Platform.DISCORD, Platform.TELEGRAM}" in gateway
+
+
+def test_owner_policy_requires_full_live_canonical_plan_checklist():
+    standard = (ROOT / "overlay/hermes/plugins/agk_discord_ui_policy/STANDARD.md").read_text()
+    assert "Show every canonical plan action in the live Action Message" in standard
+    assert "completed, in progress, pending, or cancelled" in standard
+    assert "plan progress must edit the same message" in standard.lower()
+    normalized = standard.lower()
+    assert "before operational execution begins" in normalized
+    assert "every currently known action" in normalized
+
+
+def test_owner_policy_applies_same_plan_message_without_telegram_notification_storms():
+    standard = (ROOT / "overlay/hermes/plugins/agk_discord_ui_policy/STANDARD.md").read_text()
+    normalized = standard.lower()
+    assert "discord and telegram" in normalized
+    assert "same message" in normalized
+    assert "notification storm" in normalized
+    assert "before operational execution begins" in normalized
+
+
+def test_shared_hermes_refresh_syncs_every_named_profile_not_only_base_homes():
+    installer = (ROOT / "overlay/scripts/install-shared-hermes.sh").read_text()
+    assert "for profile_config in /home/*/.hermes/profiles/*/config.yaml" in installer
+    assert 'HERMES_HOME="$profile_home"' in installer
+    assert '"$install_root/scripts/sync-hermes.sh"' in installer
+
+
+def test_owner_policy_pins_editorial_minimal_action_message_marks():
+    standard = (ROOT / "overlay/hermes/plugins/agk_discord_ui_policy/STANDARD.md").read_text()
+    assert "Editorial minimal" in standard
+    assert "`✓` completed" in standard
+    assert "`→` in progress" in standard
+    assert "`·` pending" in standard
+    assert "`◇` verifying" in standard
+    assert "`‖` waiting or blocked" in standard
+    assert "`×` failed" in standard
+    assert "`—` cancelled" in standard
+
+
+def test_owner_policy_uses_one_visible_question_surface():
+    prompt = _policy_prompt()
+    assert "interactive surface as the sole visible question" in prompt
+    assert "Do not preface it with a separate assistant message" in prompt

@@ -1,8 +1,10 @@
 """Automatic prompt archive and model-facing AGK completion ledger tool."""
 from __future__ import annotations
-import importlib.util, json, os
+import importlib.util, json, os, threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+from hermes_constants import get_hermes_home
 
 _COMPLETION_SCHEMA={
  "name":"agk_completion","description":"Persist and verify AGK prompt/requirement/artifact/evidence graphs.",
@@ -16,6 +18,77 @@ _COMPLETION_SCHEMA={
  },"required":["action"]}}
 AGK_COMPLETION_TOOL_SCHEMA=_COMPLETION_SCHEMA
 
+_PLAN_EXEMPT_TOOLS=frozenset({"todo","clarify","skill_view","skills_list","session_search"})
+_PLANNED_TURNS: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+_PLAN_LOCK=threading.Lock()
+_PLAN_TURN_LIMIT=2048
+
+
+def _plan_key(session_id:str,turn_id:str,task_id:str="")->tuple[str,str,str]|None:
+ session=str(session_id or "").strip()
+ # Hermes' cron loop can rotate turn_id between tool cycles while task_id stays
+ # stable for the complete scheduled run. Prefer task_id when present; retain
+ # turn_id as the backward-compatible boundary for runtimes that omit task_id.
+ scope=str(task_id or "").strip() or str(turn_id or "").strip()
+ if not session or not scope: return None
+ try: home=str(get_hermes_home().resolve())
+ except Exception: return None  # noqa: BLE001 - policy gate must fail closed
+ return home,session,scope
+
+
+def require_plan_before_work(tool_name:str="",args:dict|None=None,session_id:str="",turn_id:str="",task_id:str="",**_kwargs):
+ """Block operational tools until the current task/turn has applied a todo plan."""
+ name=str(tool_name or "").strip()
+ if name=="todo" or name in _PLAN_EXEMPT_TOOLS:
+  return None
+ key=_plan_key(session_id,turn_id,task_id)
+ if key is None:
+  return {"action":"block","message":"Plan Mode required: missing session/task/turn identity; apply a canonical todo plan before operational work."}
+ with _PLAN_LOCK: planned=key in _PLANNED_TURNS
+ if planned:
+  return None
+ return {"action":"block","message":"Plan Mode required: apply a canonical todo plan before operational work, then retry this tool."}
+
+
+def _canonical_plan_from_result(result:Any)->list[dict]:
+ payload=result if isinstance(result,dict) else None
+ if payload is None:
+  try: payload=json.loads(str(result or ""))
+  except (TypeError,ValueError,json.JSONDecodeError): return []
+ if not isinstance(payload,dict): return []
+ for key in ("result","output"):
+  nested=payload.get(key)
+  if isinstance(nested,str):
+   try:
+    decoded=json.loads(nested)
+    if isinstance(decoded,dict): payload=decoded
+   except (TypeError,ValueError,json.JSONDecodeError): pass
+ rows=payload.get("todos")
+ if not isinstance(rows,list) or not rows: return []
+ valid=[]; ids=set()
+ for row in rows:
+  if not isinstance(row,dict): return []
+  item_id=str(row.get("id") or "").strip(); content=str(row.get("content") or "").strip()
+  status=str(row.get("status") or "").strip().lower()
+  if not item_id or not content or item_id in ids or status not in {"pending","in_progress","completed","cancelled"}: return []
+  ids.add(item_id); valid.append({"id":item_id,"content":content,"status":status})
+ unresolved=[row for row in valid if row["status"] not in {"completed","cancelled"}]
+ if not unresolved or sum(row["status"]=="in_progress" for row in unresolved)!=1: return []
+ return valid
+
+
+def record_applied_plan(tool_name:str="",args:dict|None=None,session_id:str="",turn_id:str="",task_id:str="",result:Any=None,status:str="",**_kwargs):
+ """Authorize work only after a successful canonical todo mutation is persisted."""
+ if str(tool_name or "").strip()!="todo" or str(status or "").lower() not in {"ok","success"}: return None
+ submitted=args.get("todos") if isinstance(args,dict) else None
+ if not isinstance(submitted,list) or not submitted: return None
+ key=_plan_key(session_id,turn_id,task_id)
+ if key is None or not _canonical_plan_from_result(result): return None
+ with _PLAN_LOCK:
+  _PLANNED_TURNS[key]=None; _PLANNED_TURNS.move_to_end(key)
+  while len(_PLANNED_TURNS)>_PLAN_TURN_LIMIT: _PLANNED_TURNS.popitem(last=False)
+ return None
+
 
 def _harness_path():
  root=Path(os.environ.get("AGK_TERMINAL_ROOT","/usr/local/lib/agk-terminal"))
@@ -27,7 +100,7 @@ def _module():
  module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module
 
 def open_store():
- home=Path(os.environ.get("HERMES_HOME") or Path.home()/".hermes")
+ home=get_hermes_home()
  return _module().CompletionStore(home/"completion")
 
 def _message_text(value:Any)->str:
@@ -44,7 +117,7 @@ def archive_before_execution(**kwargs):
  session_id=str(kwargs.get("session_id") or "unknown")
  turn_id=str(kwargs.get("turn_id") or _module().sha256_text(text)[:16])
  platform=str(kwargs.get("platform") or "hermes")
- profile=Path(os.environ.get("HERMES_HOME") or Path.home()/".hermes").name
+ home=get_hermes_home(); profile=home.name if home.name!=".hermes" else Path.home().name
  store=open_store()
  try:
   store.archive_prompt(text,source=platform,session_id=session_id,profile=profile,source_key=f"pre_llm:{session_id}:{turn_id}")
@@ -52,10 +125,15 @@ def archive_before_execution(**kwargs):
 
 def completion_available(): return _harness_path().is_file()
 
-async def handle_completion(args:dict):
+async def handle_completion(args:dict, **_kwargs):
  from tools.registry import tool_error,tool_result
+ action=str(args.get("action") or "")
+ if action=="add_requirement":
+  for field in ("prompt_id","mission_id"):
+   if not str(args.get(field) or "").strip():
+    return tool_error(f"{field} is required for add_requirement")
  try:
-  action=str(args.get("action") or ""); store=open_store()
+  store=open_store()
   try:
    if action=="archive":
     value=store.archive_prompt(str(args.get("text") or ""),source=str(args.get("source") or "agent"),session_id=str(args.get("session_id") or "unknown"),profile=str(args.get("profile") or "default")); return tool_result({"success":True,"prompt_id":value})
@@ -78,5 +156,5 @@ async def handle_completion(args:dict):
   finally: store.close()
  except Exception as exc: return tool_error(f"AGK completion operation failed safely: {type(exc).__name__}")
 
-def completion_prompt():
- return ("AGK Completion Harness is active. The original user prompt is archived before execution. For every non-trivial request, use agk_completion to create a mission and persist every explicit/implicit requirement, constraint, deliverable, approval gate and committed follow-up. Attach artifacts and PASS evidence per requirement. Before saying done, call gate; continue the Gauntlet/Loop-Graph until permit_done=true. Never start newly discovered backlog work without explicit human authorization.")
+def completion_prompt(_session_info: dict | None = None):
+ return ("AGK Completion Harness is active. The original user prompt is archived before execution. For every non-trivial request, apply a canonical todo plan before operational work: enumerate every currently known action upfront, including pending verification, deployment, evidence, approval and rollback steps. The todo must publish the complete user-visible Station plan before operational work. Then use agk_completion to create a mission and persist every explicit/implicit requirement, constraint, deliverable, approval gate and committed follow-up. The Station messaging action message on Discord or Telegram is projected only from that canonical plan; its first visible version must expose the full known checklist, keep exactly one item in_progress, update the same message after verified transitions, and revise the visible plan when scope changes without emitting per-tool notifications. Attach artifacts and PASS evidence per requirement. Before saying done, call gate; continue the Gauntlet/Loop-Graph until permit_done=true. Never start newly discovered backlog work without explicit human authorization.")
