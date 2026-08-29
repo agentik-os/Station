@@ -79,13 +79,13 @@ def _discord(method: str, path: str, token: str, body: dict | None = None) -> di
 
 def generate_digest(today: dt.date, home: Path) -> str:
     prompt = f"""Create today's AGK News digest for {today.isoformat()} (Europe/Madrid).
-Before web tools, create a minimal canonical todo plan. Then use web_search/web_extract and only verifiable first-party release/news pages, official repositories, and primary papers published in the last 72 hours. Select 4-7 material items for agentic AI builders: models, tools, methods, systems. Do not invent or repeat stale items. Each item must contain: numbered title, category model/tool/method/system, confidence A/B, one direct source URL on its own line, and a compact factual summary with evidence or benchmark caveats. End with a one-line Gaps section for sources that failed. English only. Start exactly `AGK News — {today.strftime('%A %Y-%m-%d')} (Europe/Madrid)`. Plain text, no tables, no preamble, no conclusion, maximum 1900 characters including URLs."""
+Use web_search/web_extract and only verifiable first-party release/news pages, official repositories, and primary papers published in the last 72 hours. Select up to 7 material items for agentic AI builders: models, tools, methods, systems. Never pad the digest: if no item passes verification, output only the exact heading followed by `Gaps: No verified material items.` Do not invent or repeat stale items. Each selected item must contain: numbered title, category model/tool/method/system, confidence A/B, one direct source URL on its own line, and a compact factual summary with evidence or benchmark caveats. End with a one-line Gaps section for sources that failed. English only. Start exactly `AGK News — {today.strftime('%A %Y-%m-%d')} (Europe/Madrid)`. Plain text, no tables, no preamble, no conclusion, maximum 1900 characters including URLs."""
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=home, prefix="news-prompt-", suffix=".txt") as handle:
         handle.write(prompt)
         prompt_path = Path(handle.name)
     try:
         result = subprocess.run(
-            [HERMES, "chat", "--query-file", str(prompt_path), "--oneshot", "-Q", "-t", "web", "--provider", "openai-codex", "-m", "gpt-5.6-terra", "--reasoning", "high", "--max-turns", "30", "--run-budget", "600", "--source", "cron"],
+            [HERMES, "chat", "--query-file", str(prompt_path), "--oneshot", "-Q", "-t", "core,web", "--provider", "openai-codex", "-m", "gpt-5.6-terra", "--reasoning", "high", "--max-turns", "30", "--run-budget", "600", "--source", "cron"],
             text=True,
             capture_output=True,
             check=False,
@@ -100,11 +100,17 @@ Before web tools, create a minimal canonical todo plan. Then use web_search/web_
     session_marker = "\nSession: "
     if session_marker in text:
         text = text.split(session_marker, 1)[0].strip()
+    heading_at = text.find("AGK News —")
+    if heading_at >= 0:
+        text = text[heading_at:].strip()
     if not text.startswith("AGK News —"):
         raise RuntimeError("News output has invalid heading")
     if len(text) > 1950:
         raise RuntimeError("News output exceeds Discord safety limit")
-    if len(URL.findall(text)) < 4:
+    source_count = len(URL.findall(text))
+    if source_count == 0:
+        if "No verified" in text or "no verified" in text:
+            return ""
         raise RuntimeError("News output lacks direct source URLs")
     return text
 
@@ -140,6 +146,13 @@ def main() -> int:
             print(json.dumps({"status": "no_change", "date": now.date().isoformat()}))
             return 0
         content = generate_digest(now.date(), home)
+        if not content:
+            if args.dry_run:
+                print(json.dumps({"status": "dry_run", "date": now.date().isoformat(), "reason": "no_verified_items"}))
+                return 0
+            record_published(now.date().isoformat(), "no-change", state_path)
+            print(json.dumps({"status": "no_change", "date": now.date().isoformat(), "reason": "no_verified_items"}))
+            return 0
         if args.dry_run:
             print(json.dumps({"status": "dry_run", "characters": len(content), "sources": len(URL.findall(content))}))
             return 0
