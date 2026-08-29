@@ -1,0 +1,19 @@
+[Unit]
+Description=AGK Collective Stripe and Typeform reconciliation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/home/mission
+Environment=HERMES_HOME=/home/mission/.hermes/profiles/collective
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /usr/local/lib/agk-terminal/scripts/collective_composio_poller.py
+TimeoutStartSec=180
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mission/.hermes/profiles/collective /home/mission/.composio
+LockPersonality=true
+MemoryDenyWriteExecute=true

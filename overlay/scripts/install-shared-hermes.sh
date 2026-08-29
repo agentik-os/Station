@@ -242,12 +242,31 @@ collective_home=/home/mission/.hermes/profiles/collective
 collective_units=/home/mission/.config/systemd/user
 if [ -d "$collective_home" ]; then
   install -d -m 0755 -o mission -g "$(id -gn mission)" "$collective_units"
-  install -m 0644 -o mission -g "$(id -gn mission)" \
-    "$install_root/systemd/agk-github-stars-forum.service" \
-    "$collective_units/agk-github-stars-forum.service"
-  install -m 0644 -o mission -g "$(id -gn mission)" \
-    "$install_root/systemd/agk-github-stars-forum.timer" \
-    "$collective_units/agk-github-stars-forum.timer"
+  collective_dropin="$collective_units/hermes-gateway-collective.service.d"
+  install -d -m 0755 -o mission -g "$(id -gn mission)" "$collective_dropin"
+  printf '%s\n' '[Service]' 'Environment=DISCORD_MEMBERS_INTENT=1' \
+    > "$collective_dropin/40-collective-membership.conf"
+  chown mission:"$(id -gn mission)" "$collective_dropin/40-collective-membership.conf"
+  chmod 0644 "$collective_dropin/40-collective-membership.conf"
+  for unit in \
+    agk-github-stars-forum.service \
+    agk-github-stars-forum.timer \
+    agk-collective-composio.service \
+    agk-collective-composio.timer \
+    agk-collective-news.service \
+    agk-collective-news.timer
+  do
+    install -m 0644 -o mission -g "$(id -gn mission)" \
+      "$install_root/systemd/$unit" "$collective_units/$unit"
+  done
+  [ -x /usr/local/bin/composio ] || {
+    echo "Composio CLI unavailable; Collective automations not activated" >&2
+    exit 1
+  }
+  sudo -u mission env HOME=/home/mission /usr/local/bin/composio whoami >/dev/null || {
+    echo "Mission Composio authentication unavailable; Collective automations not activated" >&2
+    exit 1
+  }
   mission_uid=$(id -u mission)
   loginctl enable-linger mission
   systemctl start "user@$mission_uid.service"
@@ -263,17 +282,24 @@ if [ -d "$collective_home" ]; then
     XDG_RUNTIME_DIR="/run/user/$mission_uid" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
     systemctl --user daemon-reload
-  sudo -u mission env \
-    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
-    systemctl --user enable --now agk-github-stars-forum.timer
-  sudo -u mission env \
-    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+  for timer in agk-github-stars-forum.timer agk-collective-composio.timer agk-collective-news.timer; do
+    sudo -u mission env \
+      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+      systemctl --user enable --now "$timer"
+    sudo -u mission env \
+      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+      systemctl --user is-enabled --quiet "$timer"
+    sudo -u mission env \
+      XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+      systemctl --user is-active --quiet "$timer"
+  done
+  # Keep the canonical Stars timer readback explicit for release-contract audits.
+  sudo -u mission env XDG_RUNTIME_DIR="/run/user/$mission_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
     systemctl --user is-enabled --quiet agk-github-stars-forum.timer
-  sudo -u mission env \
-    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+  sudo -u mission env XDG_RUNTIME_DIR="/run/user/$mission_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
     systemctl --user is-active --quiet agk-github-stars-forum.timer
 fi
 

@@ -148,12 +148,20 @@ sys.path.insert(0, str(_Path(__file__).resolve().parents[3]))
 try:
     from .ffmpeg_utils import resolve_ffmpeg_executable
     from .agk_client_reviews import register_agk_client_review_listener
+    from .agk_collective_membership import (
+        register_collective_commands,
+        register_collective_membership_listener,
+    )
     from .agk_session_control_ui import register_station_session_commands
     from .agk_recovery_ui import register_recovery_commands
     from .agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
 except ImportError:
     from ffmpeg_utils import resolve_ffmpeg_executable
     from agk_client_reviews import register_agk_client_review_listener
+    from agk_collective_membership import (
+        register_collective_commands,
+        register_collective_membership_listener,
+    )
     from agk_session_control_ui import register_station_session_commands
     from agk_recovery_ui import register_recovery_commands
     from agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
@@ -1364,7 +1372,7 @@ class DiscordAdapter(BasePlatformAdapter):
             intents.message_content = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT", True)
             intents.dm_messages = True
             intents.guild_messages = True
-            intents.members = _needs_server_members_intent(
+            intents.members = _env_bool("DISCORD_MEMBERS_INTENT", False) or _needs_server_members_intent(
                 self._allowed_user_ids,
                 self._allowed_role_ids,
             )
@@ -1439,6 +1447,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 await adapter_self._dispatch_discord_message(message)
 
             register_agk_client_review_listener(self._client, adapter_self)
+            register_collective_membership_listener(self._client, adapter_self)
 
             @self._client.event
             async def on_message_edit(before: DiscordMessage, after: DiscordMessage):
@@ -6677,6 +6686,7 @@ class DiscordAdapter(BasePlatformAdapter):
         try:
             register_station_session_commands(self, tree)
             register_recovery_commands(self, tree)
+            register_collective_commands(self, tree)
         except Exception as exc:
             logger.warning("Station control center registration failed: %s", exc)
         # Dynamic Views are the durable public surface. Future profile bots
@@ -7098,7 +7108,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # to preserve the slash UX for deployments that intentionally allow
         # everyone in the guild.
         if ui_only:
-            allowed_ui_commands = {"station-sessions", "station-recovery", "recap", "panel", "settings", "clear"}
+            allowed_ui_commands = {"station-sessions", "station-recovery", "recap", "panel", "settings", "clear", "collective"}
             for registered in list(tree.get_commands()):
                 if getattr(registered, "name", "") not in allowed_ui_commands:
                     tree.remove_command(registered.name)
