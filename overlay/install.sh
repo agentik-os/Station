@@ -241,6 +241,13 @@ install -m 0755 "$repo_root/scripts/client_control.py" \
   "$install_root/scripts/client_control.py"
 install -m 0755 "$repo_root/scripts/install-hermes-fleet-dashboard.sh" \
   "$install_root/scripts/install-hermes-fleet-dashboard.sh"
+install -m 0755 "$repo_root/scripts/github_stars_forum_watcher.py" \
+  "$install_root/scripts/github_stars_forum_watcher.py"
+install -d -m 0755 "$install_root/systemd"
+install -m 0644 "$repo_root/systemd/agk-github-stars-forum.service" \
+  "$install_root/systemd/agk-github-stars-forum.service"
+install -m 0644 "$repo_root/systemd/agk-github-stars-forum.timer" \
+  "$install_root/systemd/agk-github-stars-forum.timer"
 install -m 0644 "$repo_root/config/topology.yaml" "$install_root/config/topology.yaml"
 install -m 0644 "$repo_root/config/providers.yaml" "$install_root/config/providers.yaml"
 install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"

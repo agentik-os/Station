@@ -238,5 +238,36 @@ for user_name in "${users[@]}"; do
   done
 done
 
+collective_home=/home/mission/.hermes/profiles/collective
+collective_units=/home/mission/.config/systemd/user
+if [ -d "$collective_home" ]; then
+  install -d -m 0755 -o mission -g "$(id -gn mission)" "$collective_units"
+  install -m 0644 -o mission -g "$(id -gn mission)" \
+    "$install_root/systemd/agk-github-stars-forum.service" \
+    "$collective_units/agk-github-stars-forum.service"
+  install -m 0644 -o mission -g "$(id -gn mission)" \
+    "$install_root/systemd/agk-github-stars-forum.timer" \
+    "$collective_units/agk-github-stars-forum.timer"
+  mission_uid=$(id -u mission)
+  loginctl enable-linger mission
+  systemctl start "user@$mission_uid.service"
+  for _ in $(seq 1 30); do
+    [ -S "/run/user/$mission_uid/bus" ] && break
+    sleep 1
+  done
+  [ -S "/run/user/$mission_uid/bus" ] || {
+    echo "Mission user manager unavailable; GitHub Stars timer not installed" >&2
+    exit 1
+  }
+  sudo -u mission env \
+    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+    systemctl --user daemon-reload
+  sudo -u mission env \
+    XDG_RUNTIME_DIR="/run/user/$mission_uid" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$mission_uid/bus" \
+    systemctl --user enable --now agk-github-stars-forum.timer
+fi
+
 echo "Shared official Hermes installation completed. Recovery snapshot: $backup_dir"
 echo "Existing runtime data and live-session dependencies were preserved."
