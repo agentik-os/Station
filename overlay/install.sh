@@ -247,6 +247,11 @@ install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"
 install -m 0644 "$repo_root/config/power-stack.yaml" \
   "$install_root/config/power-stack.yaml"
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"
+install -d -m 0755 "$install_root/hermes-core/gateway"
+for core_file in run.py station_noise_policy.py; do
+  install -m 0644 "$repo_root/hermes-core/gateway/$core_file" \
+    "$install_root/hermes-core/gateway/$core_file"
+done
 rm -rf "$install_root/hermes/plugins/agentik_os" \
   "$install_root/hermes/plugins/agk_power_stack" \
   "$install_root/hermes/plugins/agk_discord_ui_policy" \

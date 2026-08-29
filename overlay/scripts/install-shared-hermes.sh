@@ -100,6 +100,12 @@ fi
 "$official_dir/venv/bin/hermes" --version
 sudo -u operator "$official_dir/venv/bin/python" --version >/dev/null
 
+# Reapply Station-owned Discord gateway policy after every official Hermes install.
+for core_file in run.py station_noise_policy.py; do
+  install -m 0644 "$install_root/hermes-core/gateway/$core_file" \
+    "$official_dir/gateway/$core_file"
+done
+
 # The non-interactive official bootstrap deliberately skips messaging setup.
 # Install the exact Discord versions pinned by Hermes so existing gateway units
 # can reconnect immediately after their configuration is remapped.
