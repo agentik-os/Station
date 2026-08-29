@@ -108,6 +108,7 @@ sudo -u operator "$official_dir/venv/bin/python" --version >/dev/null
   --overrides <(printf '%s\n' 'pynacl>=1.6,<1.7') \
   'anthropic==0.87.0' \
   'discord.py[voice]==2.7.1' \
+  'edge-tts==7.2.8' \
   'pynacl>=1.6,<1.7' \
   'faster-whisper==1.2.1' \
   'piper-tts==1.7.0'

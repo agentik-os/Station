@@ -26,9 +26,9 @@ import time
 import traceback
 from collections import defaultdict
 from contextlib import suppress
+from copy import copy
 from typing import Callable, Dict, List, Optional, Any, Tuple
 from urllib.parse import quote, urljoin
-from .agk_message_format import normalize_station_reply
 
 from agent.async_utils import (
     consume_detached_task_result as _consume_background_task_result,
@@ -65,6 +65,22 @@ def _format_discord_markdown_link(label: str, url: str) -> str:
     escaped_label = _DISCORD_MARKDOWN_LINK_LABEL_RE.sub(r"\\\1", label)
     escaped_url = quote(url, safe=":/?#[]@!$&'*+,;=%")
     return f"[{escaped_label}](<{escaped_url}>)"
+
+
+def _without_synthetic_resume_sender(event: Any) -> Any:
+    """Keep an internal blank resume event blank in shared Discord sessions."""
+    if not (
+        getattr(event, "internal", False)
+        and not str(getattr(event, "text", "") or "").strip()
+    ):
+        return event
+    source = getattr(event, "source", None)
+    if source is None or not getattr(source, "user_name", None):
+        return event
+    normalized = copy(event)
+    normalized.source = copy(source)
+    normalized.source.user_name = None
+    return normalized
 
 
 class _Snowflake:
@@ -149,14 +165,30 @@ try:
     from .ffmpeg_utils import resolve_ffmpeg_executable
     from .agk_client_reviews import register_agk_client_review_listener
     from .agk_session_control_ui import register_station_session_commands
-    from .agk_recovery_ui import register_recovery_commands
     from .agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
+    from .agk_account_control_ui import (
+        ACCOUNT_CONTROL_GUILD_ID,
+        reconcile_account_control_channel,
+        register_account_control_center,
+    )
+    from .agk_os_control_ui import (
+        records_from_snapshot,
+        register_os_control_center,
+        station_ui_command_names,
+    )
+    from .agk_voice_control_ui import open_voice_control
 except ImportError:
     from ffmpeg_utils import resolve_ffmpeg_executable
     from agk_client_reviews import register_agk_client_review_listener
     from agk_session_control_ui import register_station_session_commands
-    from agk_recovery_ui import register_recovery_commands
     from agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
+    from agk_account_control_ui import (
+        ACCOUNT_CONTROL_GUILD_ID,
+        reconcile_account_control_channel,
+        register_account_control_center,
+    )
+    from agk_os_control_ui import records_from_snapshot, register_os_control_center, station_ui_command_names
+    from agk_voice_control_ui import open_voice_control
 
 from gateway.config import Platform, PlatformConfig
 
@@ -594,10 +626,23 @@ class VoiceReceiver:
     SAMPLE_RATE = 48000        # Discord native rate
     CHANNELS = 2               # Discord sends stereo
 
-    def __init__(self, voice_client, allowed_user_ids: set = None):
+    def __init__(
+        self,
+        voice_client,
+        allowed_user_ids: Optional[set] = None,
+        *,
+        silence_threshold: Optional[float] = None,
+    ):
         self._vc = voice_client
         self._allowed_user_ids = allowed_user_ids or set()
         self._running = False
+        if silence_threshold is not None:
+            try:
+                threshold = float(silence_threshold)
+            except (TypeError, ValueError):
+                threshold = self.SILENCE_THRESHOLD
+            if math.isfinite(threshold):
+                self.SILENCE_THRESHOLD = min(3.0, max(0.35, threshold))
 
         # Decryption
         self._secret_key: Optional[bytes] = None
@@ -808,6 +853,11 @@ class VoiceReceiver:
         if self._dave_session:
             with self._lock:
                 user_id = self._ssrc_to_user.get(ssrc, 0)
+            # Discord may not replay SPEAKING after a receiver is installed on
+            # an existing voice connection. DAVE needs the user id *before*
+            # Opus decode, so infer only through the existing owner allowlist.
+            if not user_id:
+                user_id = self._infer_user_for_ssrc(ssrc)
             if user_id:
                 try:
                     import davey
@@ -1056,6 +1106,11 @@ class DiscordAdapter(BasePlatformAdapter):
     - Reaction-based feedback
     """
 
+    # Restarts are an infrastructure event, not a request for human steering.
+    # Resume from the first unfinished step instead of asking the Discord user
+    # to type "continue" in every interrupted channel/thread.
+    interactive_resume = False
+
     # Discord message limits
     MAX_MESSAGE_LENGTH = 2000
     _SPLIT_THRESHOLD = 1900  # near the 2000-char split point
@@ -1067,6 +1122,37 @@ class DiscordAdapter(BasePlatformAdapter):
     # incident delivered 60,698 chars as 31 messages).  Chunks beyond the
     # cap are replaced by a short notice.
     MAX_SPLIT_MESSAGES = 8
+
+    async def handle_message(self, event: Any) -> None:
+        await super().handle_message(_without_synthetic_resume_sender(event))
+
+    async def refresh_account_surfaces(self, *, reason: str) -> dict[str, str]:
+        """Attempt each account surface once and report class-only failures."""
+        logger.info("[%s] Refreshing account surfaces (%s)", self.name, reason)
+        failures: dict[str, str] = {}
+        view = getattr(self, "_account_control_view", None)
+        if view is not None:
+            try:
+                await view.refresh_message()
+            except Exception as exc:  # noqa: BLE001 - presentation is best effort after commit.
+                failures["persistent_post"] = type(exc).__name__
+                logger.warning(
+                    "[%s] Account persistent-post refresh failed safely: %s",
+                    self.name,
+                    type(exc).__name__,
+                )
+        monitor = self._account_usage_monitor
+        if monitor is not None:
+            try:
+                await monitor.refresh_once()
+            except Exception as exc:  # noqa: BLE001 - monitor providers expose varied errors.
+                failures["usage_monitor"] = type(exc).__name__
+                logger.warning(
+                    "[%s] Account usage-monitor refresh failed safely: %s",
+                    self.name,
+                    type(exc).__name__,
+                )
+        return failures
 
     # Auto-disconnect from voice channel after this many seconds of inactivity.
     # Config key: discord.voice_channel_inactivity_timeout_seconds (0 disables)
@@ -1108,6 +1194,11 @@ class DiscordAdapter(BasePlatformAdapter):
         self._voice_timeout_tasks: Dict[int, asyncio.Task] = {}  # guild_id -> timeout task
         self._voice_timeout_seconds = self._load_voice_timeout()
         self._playback_timeout_seconds = self._load_playback_timeout()
+        self._voice_silence_threshold_seconds = self._finite_positive_config_float(
+            "voice_silence_threshold_seconds",
+            VoiceReceiver.SILENCE_THRESHOLD,
+            env_key="HERMES_DISCORD_VOICE_SILENCE_THRESHOLD_SECONDS",
+        )
         # Phase 2: voice listening
         self._voice_receivers: Dict[int, VoiceReceiver] = {}  # guild_id -> VoiceReceiver
         self._voice_listen_tasks: Dict[int, asyncio.Task] = {}  # guild_id -> listen loop
@@ -1170,6 +1261,7 @@ class DiscordAdapter(BasePlatformAdapter):
         self._disconnecting = False
         self._missed_message_backfill_task: Optional[asyncio.Task] = None
         from hermes_constants import get_hermes_home
+        self._hermes_home = get_hermes_home().resolve()
         from plugins.platforms.discord.recovery import DiscordRecoveryStore
         self._discord_recovery_store = DiscordRecoveryStore(get_hermes_home())
         # Dedup cache: prevents duplicate bot responses when Discord
@@ -1413,6 +1505,19 @@ class DiscordAdapter(BasePlatformAdapter):
                 await adapter_self._resolve_allowed_usernames()
                 adapter_self._ready_event.set()
 
+                try:
+                    register_account_control_center(adapter_self._client, adapter_self)
+                    account_guild = adapter_self._client.get_guild(ACCOUNT_CONTROL_GUILD_ID)
+                    if account_guild is None:
+                        raise RuntimeError("Station guild is unavailable")
+                    await reconcile_account_control_channel(account_guild, adapter_self)
+                except Exception as exc:
+                    logger.warning(
+                        "[%s] Account Control Center reconciliation failed safely: %s",
+                        adapter_self.name,
+                        type(exc).__name__,
+                    )
+
                 if adapter_self._post_connect_task and not adapter_self._post_connect_task.done():
                     adapter_self._post_connect_task.cancel()
                 adapter_self._post_connect_task = asyncio.create_task(
@@ -1604,6 +1709,21 @@ class DiscordAdapter(BasePlatformAdapter):
             return False, False
         if message.type not in {discord.MessageType.default, discord.MessageType.reply}:
             return False, False
+
+        # A per-profile channel allowlist is an ingress boundary for every
+        # guild event, including bot-authored inter-agent mentions. Previously
+        # this gate lived only inside _is_allowed_user(), so bot messages could
+        # wake a dedicated OS from arbitrary channels. DMs remain available.
+        if not isinstance(message.channel, discord.DMChannel):
+            parent_id = self._get_parent_channel_id(message.channel)
+            channel_keys = self._discord_channel_keys(message, parent_id)
+            allowed_channels = self._get_allowed_channels()
+            if (
+                allowed_channels
+                and "*" not in allowed_channels
+                and not (channel_keys & allowed_channels)
+            ):
+                return False, False
 
         role_authorized = False
         if getattr(message.author, "bot", False):
@@ -3363,15 +3483,13 @@ class DiscordAdapter(BasePlatformAdapter):
                 plugin_names = set(); agentik_names = set()
             core_priority = {
                 "station-sessions": 0,
-                "recap": 0,
-                "station-recovery": 0,
                 "clear": 0,
                 "panel": 1,
                 "account": 2,
                 "model": 3,
             }
             core_names = {
-                "station-sessions", "station-recovery", "recap", "help", "status", "new", "stop", "resume", "sessions", "model",
+                "station-sessions", "help", "status", "new", "stop", "resume", "sessions", "model",
                 "sethome", "clear", "undo", "approve", "deny", "queue",
                 "background", "context", "skills", "mcp", "restart", "version", "account", "panel",
             }
@@ -4821,6 +4939,44 @@ class DiscordAdapter(BasePlatformAdapter):
         mixers = getattr(self, "_voice_mixers", None)
         return bool(mixers) and mixers.get(guild_id) is not None
 
+    def _ensure_voice_receiver(self, guild_id: int, voice_client) -> bool:
+        """Start or repair the inbound voice pipeline for a connected guild."""
+        receiver = self._voice_receivers.get(guild_id)
+        listen_task = self._voice_listen_tasks.get(guild_id)
+        task_alive = bool(listen_task and not listen_task.done())
+        if receiver is not None and task_alive:
+            return True
+
+        if listen_task is not None and not listen_task.done():
+            listen_task.cancel()
+        if receiver is not None:
+            try:
+                receiver.stop()
+            except Exception:
+                logger.debug("Failed to stop stale voice receiver", exc_info=True)
+
+        try:
+            receiver = VoiceReceiver(
+                voice_client,
+                allowed_user_ids=self._allowed_user_ids,
+                silence_threshold=getattr(
+                    self,
+                    "_voice_silence_threshold_seconds",
+                    VoiceReceiver.SILENCE_THRESHOLD,
+                ),
+            )
+            receiver.start()
+            self._voice_receivers[guild_id] = receiver
+            self._voice_listen_tasks[guild_id] = asyncio.ensure_future(
+                self._voice_listen_loop(guild_id)
+            )
+            return True
+        except Exception as e:
+            self._voice_receivers.pop(guild_id, None)
+            self._voice_listen_tasks.pop(guild_id, None)
+            logger.warning("Voice receiver failed to start: %s", e)
+            return False
+
     async def join_voice_channel(self, channel, *, text_channel_id: int = None, source: dict = None) -> bool:
         """Join a Discord voice channel. Returns True on success.
 
@@ -4835,13 +4991,19 @@ class DiscordAdapter(BasePlatformAdapter):
         guild_id = channel.guild.id
 
         async with self._voice_locks.setdefault(guild_id, asyncio.Lock()):
+            # Persist routing even when this is an idempotent rejoin. A previous
+            # receiver-start failure must be repairable without disconnecting.
+            if text_channel_id is not None:
+                self._voice_text_channels[guild_id] = text_channel_id
+            if source is not None:
+                self._voice_sources[guild_id] = source
+
             # Already connected in this guild?
             existing = self._voice_clients.get(guild_id)
             if existing and existing.is_connected():
-                if existing.channel.id == channel.id:
-                    self._reset_voice_timeout(guild_id)
-                    return True
-                await existing.move_to(channel)
+                if existing.channel.id != channel.id:
+                    await existing.move_to(channel)
+                self._ensure_voice_receiver(guild_id, existing)
                 self._reset_voice_timeout(guild_id)
                 return True
 
@@ -4849,23 +5011,8 @@ class DiscordAdapter(BasePlatformAdapter):
             self._voice_clients[guild_id] = vc
             self._reset_voice_timeout(guild_id)
 
-            # Store text-channel binding for automatic/programmatic joins
-            # so voice transcriptions can be routed without /voice join.
-            if text_channel_id is not None:
-                self._voice_text_channels[guild_id] = text_channel_id
-            if source is not None:
-                self._voice_sources[guild_id] = source
-
             # Start voice receiver (Phase 2: listen to users)
-            try:
-                receiver = VoiceReceiver(vc, allowed_user_ids=self._allowed_user_ids)
-                receiver.start()
-                self._voice_receivers[guild_id] = receiver
-                self._voice_listen_tasks[guild_id] = asyncio.ensure_future(
-                    self._voice_listen_loop(guild_id)
-                )
-            except Exception as e:
-                logger.warning("Voice receiver failed to start: %s", e)
+            self._ensure_voice_receiver(guild_id, vc)
 
             # Phase 3: install the continuous mixer (ambient bed + ducked
             # speech).  Best-effort — if it fails we fall back to the legacy
@@ -6069,7 +6216,7 @@ class DiscordAdapter(BasePlatformAdapter):
         """
         if not content:
             return content
-        return convert_table_to_bullets(normalize_station_reply(content))
+        return convert_table_to_bullets(content)
 
     async def _run_simple_slash(
         self,
@@ -6637,7 +6784,10 @@ class DiscordAdapter(BasePlatformAdapter):
         return {credential_id: usage for credential_id, usage in rows if credential_id}
 
     async def _prefer_account_credential(self, provider: str, credential_id: str) -> str:
-        from hermes_cli.auth import prefer_eligible_credential
+        try:
+            from .agk_account_control import prefer_eligible_credential
+        except ImportError:
+            from agk_account_control import prefer_eligible_credential
         return await asyncio.to_thread(prefer_eligible_credential, provider, credential_id)
 
     async def _remove_account_credential(self, provider: str, credential_id: str) -> bool:
@@ -6674,11 +6824,25 @@ class DiscordAdapter(BasePlatformAdapter):
             return
 
         tree = self._client.tree
+        hermes_home = self._hermes_home
+        if hermes_home == _Path("/home/private/.hermes"):
+            snapshot = _Path("/var/lib/agk-terminal/fleet/fleet-snapshot.json")
+            raw_owners = self.config.extra.get("allow_admin_from") or []
+            if isinstance(raw_owners, str):
+                raw_owners = [value.strip() for value in raw_owners.split(",")]
+            owner_ids = {
+                int(value) for value in raw_owners
+                if str(value).strip().isdigit()
+            }
+            register_os_control_center(
+                self._client,
+                lambda: records_from_snapshot(snapshot),
+                owner_ids=owner_ids,
+            )
         try:
             register_station_session_commands(self, tree)
-            register_recovery_commands(self, tree)
         except Exception as exc:
-            logger.warning("Station control center registration failed: %s", exc)
+            logger.warning("Station Session Control Center registration failed: %s", exc)
         # Dynamic Views are the durable public surface. Future profile bots
         # inherit this policy when sync-hermes installs the adapter.
         ui_only = str(
@@ -6873,23 +7037,9 @@ class DiscordAdapter(BasePlatformAdapter):
         async def slash_reload_skills(interaction: discord.Interaction):
             await self._run_simple_slash(interaction, "/reload-skills")
 
-        @tree.command(name="voice", description="Toggle voice reply mode")
-        @discord.app_commands.describe(mode="Voice mode: join, channel, leave, on, tts, off, or status")
-        @discord.app_commands.choices(mode=[
-            # `join` and `channel` both route to _handle_voice_channel_join in
-            # gateway/run.py — expose both in the slash UI so autocomplete
-            # matches what the docs advertise and what the runner accepts when
-            # the command is typed as plain text.
-            discord.app_commands.Choice(name="join — join your voice channel", value="join"),
-            discord.app_commands.Choice(name="channel — join your voice channel (alias)", value="channel"),
-            discord.app_commands.Choice(name="leave — leave voice channel", value="leave"),
-            discord.app_commands.Choice(name="on — voice reply to voice messages", value="on"),
-            discord.app_commands.Choice(name="tts — voice reply to all messages", value="tts"),
-            discord.app_commands.Choice(name="off — text only", value="off"),
-            discord.app_commands.Choice(name="status — show current mode", value="status"),
-        ])
-        async def slash_voice(interaction: discord.Interaction, mode: str = ""):
-            await self._run_simple_slash(interaction, f"/voice {mode}".strip())
+        @tree.command(name="voice", description="Open voice controls")
+        async def slash_voice(interaction: discord.Interaction):
+            await open_voice_control(self, interaction)
 
         @tree.command(name="update", description="Update Hermes Agent to the latest version")
         async def slash_update(interaction: discord.Interaction):
@@ -6898,6 +7048,12 @@ class DiscordAdapter(BasePlatformAdapter):
         @tree.command(name="restart", description="Gracefully restart the Hermes gateway")
         async def slash_restart(interaction: discord.Interaction):
             await self._run_simple_slash(interaction, "/restart", "Restart requested~")
+
+        @tree.command(name="leave", description="Leave the current voice channel")
+        async def slash_leave(interaction: discord.Interaction):
+            await self._run_simple_slash(
+                interaction, "/voice leave", "Leaving voice channel~"
+            )
 
         @tree.command(name="approve", description="Approve a pending dangerous command")
         @discord.app_commands.describe(scope="Optional: 'all', 'session', 'always', 'all session', 'all always'")
@@ -7098,7 +7254,8 @@ class DiscordAdapter(BasePlatformAdapter):
         # to preserve the slash UX for deployments that intentionally allow
         # everyone in the guild.
         if ui_only:
-            allowed_ui_commands = {"station-sessions", "station-recovery", "recap", "panel", "settings", "clear"}
+            hermes_home = self._hermes_home
+            allowed_ui_commands = station_ui_command_names(hermes_home)
             for registered in list(tree.get_commands()):
                 if getattr(registered, "name", "") not in allowed_ui_commands:
                     tree.remove_command(registered.name)
@@ -9370,7 +9527,9 @@ class DiscordAdapter(BasePlatformAdapter):
         #   discord.ignored_channels: Channel IDs where bot NEVER responds (even when mentioned)
         #   discord.allowed_channels: If set, bot ONLY responds in these channels (whitelist)
         #   discord.no_thread_channels: Channel IDs where bot responds directly without creating thread
-        #   discord.auto_thread: Auto-create thread on @mention in channels (default: true)
+        #   discord.auto_thread: Compatibility opt-in for auto-threading mentions (default: false).
+        #   Station keeps normal work in the current channel/session; automatic
+        #   Discord threads are reserved for the station_interagent broker.
 
         thread_id = None
         parent_channel_id = None
@@ -9458,7 +9617,11 @@ class DiscordAdapter(BasePlatformAdapter):
         if not is_thread and not isinstance(message.channel, discord.DMChannel):
             no_thread_channels = self._get_no_thread_channels()
             skip_thread = bool(channel_keys & no_thread_channels) or is_free_channel
-            auto_thread = os.getenv("DISCORD_AUTO_THREAD", "true").lower() in {"true", "1", "yes"}
+            # Off by default: normal turns continue in their existing
+            # channel/session. Only an explicit compatibility opt-in may use
+            # Hermes auto-threading; Station inter-agent threads are created by
+            # the dedicated broker, outside this inbound-message path.
+            auto_thread = os.getenv("DISCORD_AUTO_THREAD", "false").lower() in {"true", "1", "yes"}
             is_reply_message = getattr(message, "type", None) == discord.MessageType.reply
             if auto_thread and not skip_thread and not is_voice_linked_channel and not is_reply_message:
                 thread = await self._auto_create_thread(message)

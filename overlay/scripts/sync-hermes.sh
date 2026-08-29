@@ -72,8 +72,15 @@ hermes config set stt.local.device cpu >/dev/null
 hermes config set stt.local.compute_type int8 >/dev/null
 hermes config set stt.local.vad true >/dev/null
 hermes config set stt.prompt 'AGK, Agentik, Hermes, Gareth, Operator, Mission, Private, RMUX, Discord, Codex' >/dev/null
-hermes config set tts.provider piper >/dev/null
-hermes config set tts.piper.voice fr_FR-siwis-medium >/dev/null
+if [ "$(id -un)" = "agentik" ] && [ "$hermes_home" = "/home/agentik/.hermes" ]; then
+  # Natural neural French voice for the conversational Agentik surface. Edge
+  # TTS is free at use time; Piper remains installed for offline rollback.
+  hermes config set tts.provider edge >/dev/null
+  hermes config set tts.edge.voice fr-FR-HenriNeural >/dev/null
+else
+  hermes config set tts.provider piper >/dev/null
+  hermes config set tts.piper.voice fr_FR-siwis-medium >/dev/null
+fi
 # Cross-session discovery is intentionally stricter than ordinary bot access:
 # Hermes requires an explicit slash administrator. Promote only numeric IDs
 # already authorized by the profile's own DISCORD_ALLOWED_USERS setting; never
