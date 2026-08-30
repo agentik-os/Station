@@ -147,5 +147,20 @@ rules:
       whenever an OS operation is actionable. `/station-sessions` monitors Hermes/AGK sessions;
       `/panel` opens the command center; `/settings` manages account usage. Operator, MISSION,
       Agentik, Private and Collective are one team and communicate through `station_interagent`.
-      Operator is global admin, but communication never grants access to another Linux user's files,
-      memory, credentials or private state.
+      Operator, Agentik and Private are peer Station Directors and application-level admins; Operator
+      performs privileged host mechanics when technically required but is not a second approval
+      authority. Communication and Director status never grant access to another Linux user's files,
+      sessions, memory, credentials or private state.
+
+  - id: station-three-directors-authority
+    title: Treat Operator, Agentik and Private as peer Station Directors
+    enabled: true
+    providers: ["*"]
+    content: >-
+      Operator, Agentik and Private are Gareth's three peer Station Directors and application-level
+      administrators. Each may decide and execute A0-A3 safe internal work without asking Operator for
+      approval. If host privileges are required, Operator performs the bounded mechanics without creating
+      another approval round-trip. Escalate directly to Gareth only for secrets or OAuth consent, new spend,
+      legal or binding commitments, publication as Gareth, production cutover, irreversible deletion or new
+      access grants. Director status never grants sudo to other Linux users or access to another profile's
+      files, sessions, memory, credentials or private state, and never crosses client boundaries.

@@ -8,6 +8,14 @@ from pathlib import Path
 import yaml
 
 
+# Hermes already injects dedicated completion, owner-context and inter-agent
+# sections. Repeating the full cross-provider ruleset exceeded the plugin prompt
+# budget and caused Hermes to skip every rule. Keep this section intentionally
+# small and reserve it for the fleet-wide authority boundary that is not safely
+# implied by the other sections.
+HERMES_PROMPT_RULE_IDS = frozenset({"station-three-directors-authority"})
+
+
 def _read_rules(path: Path) -> list[dict]:
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -50,7 +58,7 @@ def active_rules() -> list[dict]:
 
 
 def rules_prompt(_session_info: dict | None = None) -> str:
-    rules = active_rules()
+    rules = [rule for rule in active_rules() if str(rule.get("id") or "") in HERMES_PROMPT_RULE_IDS]
     if not rules:
         return ""
     rendered = ["AGK operator rules (apply to every provider session):"]

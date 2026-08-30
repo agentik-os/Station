@@ -18,7 +18,12 @@ _COMPLETION_SCHEMA={
  },"required":["action"]}}
 AGK_COMPLETION_TOOL_SCHEMA=_COMPLETION_SCHEMA
 
-_PLAN_EXEMPT_TOOLS=frozenset({"todo","clarify","skill_view","skills_list","session_search"})
+_PLAN_EXEMPT_TOOLS=frozenset({
+ "todo","clarify","skill_view","skills_list","session_search",
+ # Read-only discovery must remain available so an agent can build a complete,
+ # evidence-based plan instead of guessing or looping on the plan gate.
+ "tool_search","tool_describe","read_file","search_files","web_search","web_extract",
+})
 _PLANNED_TURNS: OrderedDict[tuple[str, str, str], None] = OrderedDict()
 _PLAN_LOCK=threading.Lock()
 _PLAN_TURN_LIMIT=2048
@@ -128,10 +133,8 @@ def completion_available(): return _harness_path().is_file()
 async def handle_completion(args:dict, **_kwargs):
  from tools.registry import tool_error,tool_result
  action=str(args.get("action") or "")
- if action=="add_requirement":
-  for field in ("prompt_id","mission_id"):
-   if not str(args.get(field) or "").strip():
-    return tool_error(f"{field} is required for add_requirement")
+ if action=="add_requirement" and not str(args.get("mission_id") or "").strip():
+  return tool_error("mission_id is required for add_requirement")
  try:
   store=open_store()
   try:
@@ -140,7 +143,13 @@ async def handle_completion(args:dict, **_kwargs):
    if action=="create_mission":
     value=store.create_mission(str(args.get("mission_id") or "") or None,[str(args.get("prompt_id") or "")]); return tool_result({"success":True,"mission_id":value})
    if action=="add_requirement":
-    value=store.add_requirement(str(args.get("prompt_id") or ""),str(args.get("text") or ""),mission_id=str(args.get("mission_id") or "") or None,human_gate=bool(args.get("human_gate"))); return tool_result({"success":True,"requirement_id":value})
+    prompt_id=str(args.get("prompt_id") or "").strip()
+    if not prompt_id:
+     rows=store.db.execute("SELECT prompt_id FROM mission_prompts WHERE mission_id=? ORDER BY prompt_id",(str(args.get("mission_id")),)).fetchall()
+     if len(rows)!=1:
+      return tool_error("prompt_id is required when the mission does not have exactly one archived prompt")
+     prompt_id=str(rows[0][0])
+    value=store.add_requirement(prompt_id,str(args.get("text") or ""),mission_id=str(args.get("mission_id") or "") or None,human_gate=bool(args.get("human_gate"))); return tool_result({"success":True,"requirement_id":value})
    if action=="set_status": store.set_requirement_status(str(args.get("requirement_id") or ""),str(args.get("status") or "")); return tool_result({"success":True})
    if action=="artifact":
     value=store.add_artifact(str(args.get("mission_id") or ""),str(args.get("requirement_id") or "") or None,str(args.get("type") or "artifact"),str(args.get("location") or "")); return tool_result({"success":True,"artifact_id":value})
@@ -157,4 +166,4 @@ async def handle_completion(args:dict, **_kwargs):
  except Exception as exc: return tool_error(f"AGK completion operation failed safely: {type(exc).__name__}")
 
 def completion_prompt(_session_info: dict | None = None):
- return ("AGK Completion Harness is active. The original user prompt is archived before execution. For every non-trivial request, apply a canonical todo plan before operational work: enumerate every currently known action upfront, including pending verification, deployment, evidence, approval and rollback steps. The todo must publish the complete user-visible Station plan before operational work. Then use agk_completion to create a mission and persist every explicit/implicit requirement, constraint, deliverable, approval gate and committed follow-up. The Station messaging action message on Discord or Telegram is projected only from that canonical plan; its first visible version must expose the full known checklist, keep exactly one item in_progress, update the same message after verified transitions, and revise the visible plan when scope changes without emitting per-tool notifications. Attach artifacts and PASS evidence per requirement. Before saying done, call gate; continue the Gauntlet/Loop-Graph until permit_done=true. Never start newly discovered backlog work without explicit human authorization.")
+ return ("AGK Completion Harness is active. The original user prompt is archived before execution. For every non-trivial request, apply a canonical todo plan before operational work: enumerate every currently known action upfront, including pending verification, deployment, evidence, approval and rollback steps. The todo must publish the complete user-visible Station plan before operational work. Then use agk_completion to create a mission and persist every explicit/implicit requirement, constraint, deliverable, approval gate and committed follow-up. The Station messaging action message on Discord or Telegram is projected only from that canonical plan; its first visible version must expose the full known checklist, keep exactly one item in_progress, update the same message after verified transitions, and revise the visible plan when scope changes without emitting per-tool notifications. Attach artifacts and PASS evidence per requirement. Before saying done, call gate; continue the Gauntlet/Loop-Graph until permit_done=true. Add newly discovered work required by the current request to the canonical plan and continue autonomously when it is A0-A3 safe and reversible. Only unrelated backlog needs fresh human authorization; preserve genuine A4 owner gates and A5 forbidden boundaries.")

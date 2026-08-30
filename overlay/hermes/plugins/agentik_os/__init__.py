@@ -109,7 +109,7 @@ def register(ctx) -> None:
         "agentik.global-rules",
         rules_prompt,
         position="after_memory",
-        max_chars=3999,
+        max_chars=900,
     )
     ctx.register_system_prompt_section(
         "agentik.owner-context",
