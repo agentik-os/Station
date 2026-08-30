@@ -8,6 +8,7 @@ sys.path.insert(0, "/opt/agk-terminal/hermes-agent")
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "overlay/hermes/plugins/agentik_os/completion.py"
 PLUGIN_INIT = MODULE.parent / "__init__.py"
+TOOL_EXECUTOR = ROOT / "overlay/hermes-core/agent/tool_executor.py"
 
 
 def load():
@@ -51,6 +52,13 @@ def test_plan_gate_hooks_are_registered():
     source = PLUGIN_INIT.read_text()
     assert 'ctx.register_hook("pre_tool_call", require_plan_before_work)' in source
     assert 'ctx.register_hook("post_tool_call", record_applied_plan)' in source
+
+
+def test_sequential_executor_reports_terminal_success_status_to_post_tool_hooks():
+    source = TOOL_EXECUTOR.read_text()
+    marker = "if _executor_must_emit_post_hook:"
+    block = source[source.index(marker):source.index("if not _execution_blocked:", source.index(marker))]
+    assert 'status="error" if _is_error_result else "success"' in block
 
 
 def test_prompt_requires_one_visible_discord_or_telegram_plan_before_work():

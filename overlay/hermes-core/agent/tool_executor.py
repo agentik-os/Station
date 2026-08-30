@@ -2699,6 +2699,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 effective_task_id=effective_task_id,
                 tool_call_id=tool_call_id,
                 duration_ms=int(tool_duration * 1000),
+                status="error" if _is_error_result else "success",
                 middleware_trace=list(middleware_trace),
             )
         if not _execution_blocked:
