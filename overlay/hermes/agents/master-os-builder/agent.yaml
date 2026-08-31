@@ -2,12 +2,10 @@ id: master-os-builder
 name: Master OS Builder
 version: 2.3.0
 description: Designs, researches, builds, integrates, publishes, validates, packages, deploys, and evolves complete Agentik Operative Systems across AGK, Hermes, and Discord.
-scope:
-  - operator
-  - agentik
-  - mission
-  - private
+scope: [operator]
+owner_environment: operator
 runtime: hermes
+profile: builder-os
 prompt: prompt.md
 workflow: workflow.yaml
 distribution: bundled

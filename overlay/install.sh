@@ -238,6 +238,8 @@ install -m 0755 "$repo_root/scripts/completion_oracle_gate.py" \
   "$install_root/scripts/completion_oracle_gate.py"
 install -m 0755 "$repo_root/scripts/approval_gate.py" \
   "$install_root/scripts/approval_gate.py"
+install -m 0755 "$repo_root/scripts/station_durability.py" \
+  "$install_root/scripts/station_durability.py"
 install -m 0755 "$repo_root/scripts/client_control.py" \
   "$install_root/scripts/client_control.py"
 install -m 0755 "$repo_root/scripts/install-hermes-fleet-dashboard.sh" \
@@ -278,6 +280,8 @@ install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"
 install -m 0644 "$repo_root/config/discord-channel-state.json" "$install_root/config/discord-channel-state.json"
 install -m 0644 "$repo_root/config/power-stack.yaml" \
   "$install_root/config/power-stack.yaml"
+install -m 0644 "$repo_root/config/station-durability-policy.json" \
+  "$install_root/config/station-durability-policy.json"
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"
 install -d -m 0755 "$install_root/hermes/tools"
 install -m 0644 "$repo_root/hermes-core/tools/clarify_tool.py" \

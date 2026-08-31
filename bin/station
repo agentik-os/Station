@@ -39,7 +39,7 @@ case "$command" in
       mission) user=mission; unit=hermes-gateway.service; home=/home/mission/.hermes ;;
       private) user=private; unit=hermes-gateway.service; home=/home/private/.hermes ;;
       collective) user=agentik; unit=hermes-gateway-collective.service; home=/home/agentik/.hermes/profiles/collective ;;
-      nutrition-os) user=operator; unit=hermes-gateway-nutrition-os.service; home=/home/operator/.hermes/profiles/nutrition-os ;;
+      nutrition-os) user=private; unit=hermes-gateway-nutrition-os.service; home=/home/private/.hermes/profiles/nutrition-os ;;
       dentistrygpt) user=mission; unit=hermes-gateway-clientdentistrygptee881c.service; home=/home/mission/.hermes/profiles/clientdentistrygptee881c ;;
       *) echo "unknown gateway target" >&2; exit 2 ;;
     esac
@@ -83,6 +83,9 @@ case "$command" in
       *) echo "usage: station recovery {audit|baseline|report|decide|oracle-pass} ..." >&2; exit 2 ;;
     esac
     ;;
+  durability)
+    exec python3 "$root/overlay/scripts/station_durability.py" "$@"
+    ;;
   backup)
     [ "$(id -u)" -eq 0 ] || { echo "Station backup requires sudo" >&2; exit 1; }
     exec python3 "$root/scripts/backup.py" "$@"
@@ -116,6 +119,7 @@ Station · portable Discord + Hermes + AGK-TUI + Portal platform
   sudo station recovery decide FINDING {RELAUNCH|BACKLOG|IGNORE|ALREADY_DONE} --actor NAME --source SOURCE
   sudo station recovery approve PROFILE MISSION REQUIREMENT --actor NAME --source discord --scope production
   sudo station recovery oracle-pass PROFILE MISSION REPORT.json --actor completion-oracle
+  station durability {profile-audit|memory-audit|cron-audit|fresh-session-gate|isolated-pilot|checkpoint-command} ...
   sudo station backup
   sudo station update [--ref REF]
   sudo station rollback [RELEASE]

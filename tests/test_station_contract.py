@@ -78,3 +78,52 @@ def test_discord_rotation_registry_covers_station_bots():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert set(module.TARGETS) == {"operator", "agentik", "mission", "private", "collective", "nutrition-os"}
+
+
+def test_nutrition_safe_reload_targets_canonical_private_runtime():
+    station = (ROOT / "bin/station").read_text()
+    assert "nutrition-os) user=private; unit=hermes-gateway-nutrition-os.service; home=/home/private/.hermes/profiles/nutrition-os" in station
+    assert "nutrition-os) user=operator; unit=hermes-gateway-nutrition-os.service; home=/home/operator/.hermes/profiles/nutrition-os" not in station
+
+
+def test_every_station_registry_owns_nutrition_under_private():
+    paths = [
+        ROOT / "overlay/scripts/rotate_discord_token.py",
+        ROOT / "overlay/scripts/completion_oracle_gate.py",
+        ROOT / "overlay/scripts/recovery_router.py",
+        ROOT / "overlay/scripts/completion_harness.py",
+        ROOT / "overlay/scripts/approval_gate.py",
+        ROOT / "overlay/scripts/fleet_recovery_auditor.py",
+        ROOT / "overlay/hermes/plugins/agentik_os/nutrition_command.py",
+    ]
+    for path in paths:
+        source = path.read_text()
+        assert "/home/private/.hermes/profiles/nutrition-os" in source, path
+        assert "/home/operator/.hermes/profiles/nutrition-os" not in source, path
+
+
+def test_nutrition_specialist_is_private_owned_without_legacy_launcher():
+    manifest = (ROOT / "overlay/hermes/agents/nutrition-specialist/agent.yaml").read_text()
+    prompt = (ROOT / "overlay/hermes/agents/nutrition-specialist/prompt.md").read_text()
+    assert "owner_environment: private" in manifest
+    assert "scope: [private]" in manifest
+    assert "profile: nutrition-os" in manifest
+    assert "launcher:" not in manifest
+    assert "`nutrition-os` Hermes profile under the Private Linux boundary" in prompt
+    assert "dedicated `nutrition` Hermes profile" not in prompt
+
+
+def test_specialized_agents_have_one_canonical_owner_and_valid_profile_binding():
+    agents = ROOT / "overlay/hermes/agents"
+    expected = {
+        "completion-oracle": ("operator", None),
+        "recovery-auditor": ("operator", None),
+        "master-os-builder": ("operator", "builder-os"),
+        "nutrition-specialist": ("private", "nutrition-os"),
+    }
+    for agent_id, (owner, profile) in expected.items():
+        manifest = yaml.safe_load((agents / agent_id / "agent.yaml").read_text())
+        assert manifest["owner_environment"] == owner
+        assert manifest["scope"] == [owner]
+        assert manifest.get("profile") == profile
+        assert not manifest.get("launcher")

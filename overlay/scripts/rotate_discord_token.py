@@ -31,7 +31,7 @@ TARGETS = {
     "mission": Target("mission", "/home/mission/.hermes", "hermes-gateway.service"),
     "private": Target("private", "/home/private/.hermes", "hermes-gateway.service"),
     "collective": Target("agentik", "/home/agentik/.hermes/profiles/collective", "hermes-gateway-collective.service"),
-    "nutrition-os": Target("operator", "/home/operator/.hermes/profiles/nutrition-os", "hermes-gateway-nutrition-os.service"),
+    "nutrition-os": Target("private", "/home/private/.hermes/profiles/nutrition-os", "hermes-gateway-nutrition-os.service"),
 }
 
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{40,}$")
