@@ -101,7 +101,7 @@ fi
 # Station owns the owner-facing interaction contract layered over the pinned
 # Hermes runtime. Install the clarify schema before any profile is synchronized
 # so every bot and agent receives one self-contained question surface.
-install -m 0644 "$install_root/hermes/tools/clarify_tool.py" \
+install -m 0644 "$install_root/hermes-core/tools/clarify_tool.py" \
   "$official_dir/tools/clarify_tool.py"
 "$official_dir/venv/bin/hermes" --version
 sudo -u operator "$official_dir/venv/bin/python" --version >/dev/null

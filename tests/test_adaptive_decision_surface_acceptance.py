@@ -156,3 +156,12 @@ def test_clarify_tool_carries_adaptive_kind_and_exact_approval_scope():
         "context_detail=context_detail",
     ):
         assert forwarded in tool
+
+
+def test_installation_uses_one_canonical_adaptive_clarify_schema():
+    install = (ROOT / "overlay/install.sh").read_text()
+    shared = (ROOT / "overlay/scripts/install-shared-hermes.sh").read_text()
+    assert '"$repo_root/hermes-core/tools/clarify_tool.py"' in install
+    assert '"$repo_root/hermes/tools/clarify_tool.py"' not in install
+    assert '"$install_root/hermes-core/tools/clarify_tool.py"' in shared
+    assert '"$install_root/hermes/tools/clarify_tool.py"' not in shared
