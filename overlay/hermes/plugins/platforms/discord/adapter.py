@@ -9432,6 +9432,90 @@ class DiscordAdapter(BasePlatformAdapter):
             logger.warning("[%s] send_clarify failed: %s", self.name, exc)
             return SendResult(success=False, error=str(exc))
 
+    async def send_clarify_batch(
+        self,
+        chat_id: str,
+        question: str,
+        questions: list,
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send one navigable Discord surface for a clarify question batch."""
+        if not self._client or not DISCORD_AVAILABLE:
+            return SendResult(success=False, error="Not connected")
+
+        try:
+            source_session = str(
+                (metadata or {}).get("source_session") or session_key or ""
+            )
+            batch_items = []
+            normalized_questions = []
+            for index, raw in enumerate(questions or ()):
+                item = dict(raw or {})
+                qid = str(item.get("qid") or f"q{index}")
+                display_choices = tuple(
+                    str(choice).strip()
+                    for choice in (item.get("choices") or ())
+                    if str(choice).strip()
+                )
+                answer_choices = tuple(
+                    str(choice).strip()
+                    for choice in (item.get("choices_offered") or ())
+                    if str(choice).strip()
+                )
+                request = decision_request_from_clarify(
+                    question=str(item.get("question") or ""),
+                    choices=display_choices,
+                    clarify_id=f"{clarify_id}:{qid}",
+                    source_session=source_session,
+                    surface=None,
+                )
+                batch_items.append(request)
+                normalized_questions.append(
+                    {
+                        **item,
+                        "qid": qid,
+                        "choices": display_choices,
+                        "answer_choices": answer_choices or display_choices,
+                    }
+                )
+
+            request = DecisionRequest(
+                decision_id=f"clarify-batch-{clarify_id}",
+                title="Decisions needed",
+                state=(
+                    f"{len(batch_items)} answers are needed before work can continue."
+                ),
+                target="Current request in this session",
+                decision=str(question or "Review and answer each question."),
+                choices=(),
+                default_action="No action; work remains paused until the batch is submitted.",
+                kind=SurfaceKind.BATCH,
+                source_session=source_session,
+                batch_items=tuple(batch_items),
+            )
+            target_id = (
+                metadata.get("thread_id")
+                if metadata and metadata.get("thread_id")
+                else chat_id
+            )
+            view = AdaptiveBatchDecisionView(
+                request=request,
+                questions=tuple(normalized_questions),
+                clarify_id=clarify_id,
+                allowed_user_ids=self._allowed_user_ids,
+                allowed_role_ids=self._allowed_role_ids,
+                channel_id=str(target_id),
+                profile_id=self.name,
+            )
+            return await self.send_decision(
+                chat_id, request, view=view, metadata=dict(metadata or {})
+            )
+        except Exception as exc:
+            logger.warning("[%s] send_clarify_batch failed: %s", self.name, exc)
+            return SendResult(success=False, error=str(exc))
+
     async def send_update_prompt(
         self, chat_id: str, prompt: str, default: str = "",
         session_key: str = "",
@@ -12189,6 +12273,418 @@ def _define_discord_view_classes() -> None:
                 await message.edit(content=content, embed=embed, view=self)
             except Exception:
                 logger.debug("Unable to expire adaptive decision", exc_info=True)
+
+    class AdaptiveBatchDecisionView(discord.ui.View):
+        """One-message navigator that resolves a clarify batch atomically."""
+
+        def __init__(
+            self,
+            *,
+            request: DecisionRequest,
+            questions: Tuple[Dict[str, Any], ...],
+            clarify_id: str,
+            allowed_user_ids: set,
+            allowed_role_ids: Optional[set],
+            channel_id: str,
+            profile_id: str,
+        ):
+            super().__init__(timeout=_read_discord_prompt_timeout())
+            self.request = request
+            self.questions = tuple(questions)
+            self.clarify_id = clarify_id
+            self.allowed_user_ids = allowed_user_ids
+            self.allowed_role_ids = allowed_role_ids or set()
+            self.channel_id = str(channel_id)
+            self.guild_id = ""
+            self.profile_id = str(profile_id)
+            self.index = 0
+            self.answers: Dict[str, Any] = {}
+            self.resolved = False
+            self._resolution_lock = threading.Lock()
+            self._message = None
+            self._build_controls()
+
+        @property
+        def _current(self) -> Dict[str, Any]:
+            return self.questions[self.index]
+
+        def _custom_id(self, action: str) -> str:
+            return f"decision:{self.request.decision_id}:batch:{action}"
+
+        def _check_auth(self, interaction: "discord.Interaction") -> bool:
+            if not _component_check_auth(
+                interaction, self.allowed_user_ids, self.allowed_role_ids
+            ):
+                return False
+            interaction_channel = str(
+                getattr(interaction, "channel_id", "")
+                or getattr(getattr(interaction, "channel", None), "id", "")
+            )
+            interaction_guild = str(
+                getattr(interaction, "guild_id", "")
+                or getattr(getattr(interaction, "guild", None), "id", "")
+            )
+            return bool(
+                self.profile_id
+                and self.request.source_session
+                and interaction_channel == self.channel_id
+                and (not self.guild_id or interaction_guild == self.guild_id)
+            )
+
+        async def _deny(self, interaction: "discord.Interaction") -> None:
+            await interaction.response.send_message(
+                "You are not authorized for this decision.", ephemeral=True
+            )
+
+        def _build_controls(self) -> None:
+            self.clear_items()
+            item = self._current
+            qid = str(item["qid"])
+            choices = tuple(item.get("choices") or ())
+            answer_choices = tuple(item.get("answer_choices") or choices)
+            if choices:
+                selected = self.answers.get(qid)
+                selected_values = set(selected if isinstance(selected, list) else [selected])
+                options = [
+                    discord.SelectOption(
+                        label=_prefix_within_utf16_limit(choice, 100),
+                        value=str(index),
+                        default=answer_choices[index] in selected_values,
+                    )
+                    for index, choice in enumerate(choices)
+                ]
+                select = discord.ui.Select(
+                    placeholder="Choose one or more…" if item.get("multi_select") else "Choose one…",
+                    options=options,
+                    min_values=1,
+                    max_values=len(options) if item.get("multi_select") else 1,
+                    custom_id=self._custom_id(f"{qid}:select"),
+                    row=0,
+                )
+                select.callback = self._on_select
+                self.add_item(select)
+            else:
+                write = discord.ui.Button(
+                    label="Write response",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=self._custom_id(f"{qid}:text"),
+                    row=0,
+                )
+                write.callback = self._on_write
+                self.add_item(write)
+
+            controls = (
+                ("Previous", "previous", self._on_previous),
+                ("Next", "next", self._on_next),
+                ("Review answers", "review", self._on_review),
+                ("Close", "close", self._on_close),
+            )
+            for label, action, callback in controls:
+                button = discord.ui.Button(
+                    label=label,
+                    style=(
+                        discord.ButtonStyle.primary
+                        if action == "review"
+                        else discord.ButtonStyle.secondary
+                    ),
+                    custom_id=self._custom_id(action),
+                    row=1,
+                    disabled=(
+                        (action == "previous" and self.index == 0)
+                        or (action == "next" and self.index == len(self.questions) - 1)
+                    ),
+                )
+                button.callback = callback
+                self.add_item(button)
+
+        def _current_embed(self):
+            item = self.request.batch_items[self.index]
+            rendered = build_decision_embed(item)
+            embed = discord.Embed(
+                title=rendered.title,
+                description=rendered.description,
+                color=discord.Color.greyple(),
+            )
+            qid = str(self._current["qid"])
+            state = "answered" if qid in self.answers else "unanswered"
+            embed.set_footer(
+                text=(
+                    f"Question {self.index + 1} of {len(self.questions)} · "
+                    f"{state} · {len(self.answers)}/{len(self.questions)} complete"
+                )
+            )
+            return embed
+
+        async def _navigate(
+            self, interaction: "discord.Interaction", offset: int
+        ) -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            self.index = max(0, min(len(self.questions) - 1, self.index + offset))
+            self._build_controls()
+            await interaction.response.edit_message(
+                embed=self._current_embed(), view=self
+            )
+
+        async def _on_previous(self, interaction: "discord.Interaction") -> None:
+            await self._navigate(interaction, -1)
+
+        async def _on_next(self, interaction: "discord.Interaction") -> None:
+            await self._navigate(interaction, 1)
+
+        async def _on_select(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            values = (
+                interaction.data.get("values", [])
+                if isinstance(interaction.data, dict)
+                else getattr(interaction.data, "values", [])
+            )
+            choices = tuple(self._current.get("choices") or ())
+            answer_choices = tuple(
+                self._current.get("answer_choices") or choices
+            )
+            selected = [
+                answer_choices[int(value)]
+                for value in values
+                if str(value).isdigit() and int(value) < len(answer_choices)
+            ]
+            if not selected:
+                await interaction.response.send_message(
+                    "Choose at least one valid option.", ephemeral=True
+                )
+                return
+            with self._resolution_lock:
+                if self.resolved:
+                    became_resolved = True
+                else:
+                    self.answers[str(self._current["qid"])] = (
+                        selected if self._current.get("multi_select") else selected[0]
+                    )
+                    became_resolved = False
+            if became_resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            self._build_controls()
+            await interaction.response.edit_message(
+                embed=self._current_embed(), view=self
+            )
+
+        async def _on_write(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            parent = self
+            qid = str(self._current["qid"])
+
+            class BatchTextModal(discord.ui.Modal):
+                def __init__(modal_self):
+                    super().__init__(
+                        title="Write response",
+                        custom_id=parent._custom_id(f"{qid}:modal"),
+                    )
+
+                response = discord.ui.TextInput(
+                    label="Response",
+                    placeholder="Type the information needed to continue",
+                    required=True,
+                    max_length=2000,
+                    custom_id="batch-response",
+                )
+
+                async def on_submit(modal_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    if parent.resolved:
+                        await submitted.response.send_message(
+                            "This decision is no longer active.", ephemeral=True
+                        )
+                        return
+                    with parent._resolution_lock:
+                        if parent.resolved:
+                            became_resolved = True
+                        else:
+                            parent.answers[qid] = str(
+                                modal_self.response.value
+                            ).strip()
+                            became_resolved = False
+                    if became_resolved:
+                        await submitted.response.send_message(
+                            "This decision is no longer active.", ephemeral=True
+                        )
+                        return
+                    parent._build_controls()
+                    await submitted.response.send_message(
+                        "Response saved.", ephemeral=True
+                    )
+                    if parent._message:
+                        await parent._message.edit(
+                            embed=parent._current_embed(), view=parent
+                        )
+
+            await interaction.response.send_modal(BatchTextModal())
+
+        async def _on_review(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            with self._resolution_lock:
+                reviewed_answers = dict(self.answers)
+            missing = [
+                str(item["qid"])
+                for item in self.questions
+                if str(item["qid"]) not in reviewed_answers
+            ]
+            if missing:
+                await interaction.response.send_message(
+                    f"Answer every question before submitting. Missing: {', '.join(missing)}",
+                    ephemeral=True,
+                )
+                return
+            parent = self
+
+            class ReviewConfirmationView(discord.ui.View):
+                def __init__(review_self):
+                    super().__init__(timeout=120)
+                    submit = discord.ui.Button(
+                        label="Submit answers",
+                        style=discord.ButtonStyle.primary,
+                        custom_id=parent._custom_id("submit"),
+                    )
+                    submit.callback = review_self._submit
+                    review_self.add_item(submit)
+                    back = discord.ui.Button(
+                        label="Back",
+                        style=discord.ButtonStyle.secondary,
+                        custom_id=parent._custom_id("review-back"),
+                    )
+                    back.callback = review_self._back
+                    review_self.add_item(back)
+
+                async def _submit(review_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    await parent._resolve(
+                        submitted,
+                        from_private=True,
+                        reviewed_answers=reviewed_answers,
+                    )
+
+                async def _back(review_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    await submitted.response.edit_message(
+                        content="Review closed. Continue editing the decision message.",
+                        view=None,
+                    )
+
+            review_lines = [
+                f"{index + 1}. {sanitize_visible_text(item.get('question'))}\n"
+                f"   {sanitize_visible_text(reviewed_answers[str(item['qid'])])}"
+                for index, item in enumerate(self.questions)
+            ]
+            await interaction.response.send_message(
+                "Review answers\n\n" + "\n\n".join(review_lines),
+                view=ReviewConfirmationView(),
+                ephemeral=True,
+            )
+
+        async def _on_close(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            await self._resolve(interaction, cancel_all=True)
+
+        async def _resolve(
+            self,
+            interaction: "discord.Interaction",
+            *,
+            from_private: bool = False,
+            cancel_all: bool = False,
+            reviewed_answers: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            with self._resolution_lock:
+                if self.resolved:
+                    already_resolved = True
+                else:
+                    if cancel_all:
+                        self.answers = {}
+                    elif reviewed_answers is not None:
+                        self.answers = dict(reviewed_answers)
+                    self.resolved = True
+                    already_resolved = False
+            if already_resolved:
+                await interaction.response.send_message(
+                    "This decision has already been resolved.", ephemeral=True
+                )
+                return
+            payload = json.dumps({"answers": self.answers}, ensure_ascii=False)
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                resolve_gateway_clarify(self.clarify_id, payload)
+            except Exception:
+                logger.exception(
+                    "Adaptive batch resolution failed for %s", self.clarify_id
+                )
+            for child in self.children:
+                child.disabled = True
+            embed = self._current_embed()
+            embed.color = discord.Color.green()
+            embed.set_footer(
+                text=(
+                    "Closed · no answers submitted"
+                    if cancel_all
+                    else f"Submitted · {len(self.answers)}/{len(self.questions)} answered"
+                )
+            )
+            if from_private:
+                await interaction.response.edit_message(
+                    content="Answers submitted.", view=None
+                )
+                if self._message:
+                    await self._message.edit(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+            self.stop()
+
+        async def on_timeout(self):
+            with self._resolution_lock:
+                if self.resolved:
+                    return
+                self.resolved = True
+            for child in self.children:
+                child.disabled = True
+            if not self._message:
+                return
+            try:
+                embed = self._current_embed()
+                embed.color = discord.Color.greyple()
+                embed.set_footer(text="Expired · answers were not submitted")
+                await self._message.edit(embed=embed, view=self)
+            except Exception:
+                logger.debug("Unable to expire adaptive batch", exc_info=True)
 
     class ClarifyChoiceView(discord.ui.View):
         """Interactive button view for the clarify tool's multiple-choice prompts.

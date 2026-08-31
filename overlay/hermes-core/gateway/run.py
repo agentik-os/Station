@@ -6157,12 +6157,32 @@ class TurnRunner:
         # ------------------------------------------------------------------
         def _clarify_callback_sync(
             question: str, choices, multi_select: bool = False, surface=None,
+            questions=None,
         ) -> str:
             from tools import clarify_gateway as _clarify_mod
             import uuid as _uuid
 
             if not ctx._status_adapter:
                 return ""
+
+            # A callback that advertises ``questions`` receives the normalized
+            # batch from clarify_tool. Platforms with a native consolidated
+            # surface get one registration and one message; all other adapters
+            # retain compatibility through this callback's established
+            # sequential single-question path. Both paths return the wire
+            # contract {"answers": {qid: response}} to clarify_tool.
+            batch_questions = list(questions or ()) if questions is not None else None
+            batch_sender = getattr(ctx._status_adapter, "send_clarify_batch", None)
+            if batch_questions is not None and not callable(batch_sender):
+                return _clarify_mod.run_sequential_batch_fallback(
+                    batch_questions,
+                    lambda item: _clarify_callback_sync(
+                        item.get("question", ""),
+                        item.get("choices"),
+                        bool(item.get("multi_select", False)),
+                        questions=None,
+                    ),
+                )
 
             # Bind the structured decision to the exact blocked session before
             # it enters either the gateway registry or a platform adapter. The
@@ -6172,7 +6192,7 @@ class TurnRunner:
                 surface_payload["source_session"] = ctx.session_key or ""
 
             clarify_id = _uuid.uuid4().hex[:10]
-            _clarify_mod.register(
+            clarify_entry = _clarify_mod.register(
                 clarify_id=clarify_id,
                 session_key=ctx.session_key or "",
                 question=question,
@@ -6180,6 +6200,10 @@ class TurnRunner:
                 multi_select=bool(multi_select),
                 surface=surface_payload or None,
             )
+            if batch_questions is not None:
+                # The native batch owns all answers. Do not let an unrelated
+                # chat message resolve this one registration as open text.
+                clarify_entry.awaiting_text = False
 
             # For WeCom native streaming: finalize the current stream before
             # showing the clarify prompt so the post-answer output opens a
@@ -6224,18 +6248,32 @@ class TurnRunner:
                     exc_info=True,
                 )
 
-            fut = safe_schedule_threadsafe(
-                ctx._status_adapter.send_clarify(
+            send_metadata = {
+                **(ctx._status_thread_metadata or {}),
+                **({"decision_surface": surface_payload} if surface_payload else {}),
+                "source_session": ctx.session_key or "",
+            }
+            send_coro = (
+                getattr(ctx._status_adapter, "send_clarify_batch")(
+                    chat_id=ctx._status_chat_id,
+                    question=question,
+                    questions=batch_questions,
+                    clarify_id=clarify_id,
+                    session_key=ctx.session_key or "",
+                    metadata=send_metadata,
+                )
+                if batch_questions is not None
+                else ctx._status_adapter.send_clarify(
                     chat_id=ctx._status_chat_id,
                     question=question,
                     choices=list(choices) if choices else None,
                     clarify_id=clarify_id,
                     session_key=ctx.session_key or "",
-                    metadata={
-                        **(ctx._status_thread_metadata or {}),
-                        **({"decision_surface": surface_payload} if surface_payload else {}),
-                    },
-                ),
+                    metadata=send_metadata,
+                )
+            )
+            fut = safe_schedule_threadsafe(
+                send_coro,
                 ctx._loop_for_step,
                 logger=logger,
                 log_message="Clarify send failed to schedule",
