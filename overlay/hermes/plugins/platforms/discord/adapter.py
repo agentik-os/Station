@@ -179,8 +179,6 @@ try:
         register_account_control_center,
     )
     from .agk_os_control_ui import (
-        is_private_personal_os_home,
-        records_from_private_catalog,
         records_from_snapshot,
         register_os_control_center,
         station_ui_command_names,
@@ -196,8 +194,20 @@ except ImportError:
         reconcile_account_control_channel,
         register_account_control_center,
     )
-    from agk_os_control_ui import is_private_personal_os_home, records_from_private_catalog, records_from_snapshot, register_os_control_center, station_ui_command_names
+    from agk_os_control_ui import records_from_snapshot, register_os_control_center, station_ui_command_names
     from agk_voice_control_ui import open_voice_control
+
+try:
+    from .agk_os_control_ui import is_private_personal_os_home, records_from_private_catalog
+except (ImportError, AttributeError):
+    # Older/client profile extensions remain valid and are intentionally
+    # preserved during fleet sync. Personal OS behavior stays fail-closed until
+    # that profile carries the connection-only Private extension.
+    def is_private_personal_os_home(_hermes_home: _Path) -> bool:
+        return False
+
+    def records_from_private_catalog(*_args, **_kwargs):
+        return tuple()
 
 from gateway.config import Platform, PlatformConfig
 
