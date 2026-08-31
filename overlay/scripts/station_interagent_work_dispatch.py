@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deliver Station peer handoffs through reusable Discord pair threads."""
+"""Turn Operator-bound inter-agent messages into durable Discord work threads."""
 from __future__ import annotations
 
 import json
@@ -37,11 +37,13 @@ def validate_record(record: dict) -> dict:
     if source not in {"operator", "agentik", "mission", "private", "collective"}:
         raise DispatchError("invalid inter-agent source")
     target = str(value.get("target") or "")
-    if target not in {"operator", "agentik", "mission", "private", "collective"}:
+    if target not in {"operator", "agentik", "mission", "private", "collective"} and not re.fullmatch(
+        r"os:[a-z0-9]+(?:-[a-z0-9]+)*", target
+    ):
         raise DispatchError("invalid inter-agent target")
     mode = str(value.get("mode") or "")
     if mode != "delegate":
-        raise DispatchError("Discord threads require an explicit cross-agent delegation")
+        raise DispatchError("work threads require explicit cross-agent delegation")
     if source == target:
         raise DispatchError("self-directed bot prompts are forbidden")
     if not 1 <= len(body) <= 4000:
@@ -73,6 +75,17 @@ def runtime_ready(snapshot: str) -> bool:
 
 def normalize_instruction(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def is_final_verdict(content: str) -> bool:
+    for line in str(content or "").splitlines():
+        clean = line.strip().lstrip("*_`#> ")
+        if re.match(
+            r"(?i)^final\s+verdict\s*[:—-]\s*(?:PASS|PARTIAL|BLOCKED)\b",
+            clean,
+        ):
+            return True
+    return False
 
 
 class WorkStore:
@@ -112,20 +125,56 @@ class WorkStore:
         row = self.db.execute("SELECT * FROM work WHERE message_id=?", (message_id,)).fetchone()
         return dict(row) if row else None
 
-    def reserve(self, record: dict) -> dict:
-        self.db.execute(
-            "INSERT OR IGNORE INTO work(message_id,source,state,updated_at) VALUES(?,?,?,?)",
-            (record["id"], record["source"], "pending", time.time()),
-        )
-        self.db.commit()
-        return self.get(record["id"]) or {}
+    def claim(self, record: dict, *, stale_after_seconds: float = 180.0) -> tuple[dict, bool]:
+        """Atomically reserve one message ID; reclaim abandoned dispatch leases."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT * FROM work WHERE message_id=?",
+                (record["id"],),
+            ).fetchone()
+            if row is not None:
+                state = dict(row)
+                stale = (
+                    state.get("state") in {"dispatching", "thread-created", "thread-reused", "delivered"}
+                    and time.time() - float(state.get("updated_at") or 0) >= stale_after_seconds
+                )
+                if stale:
+                    self.db.execute(
+                        "UPDATE work SET updated_at=? WHERE message_id=?",
+                        (time.time(), record["id"]),
+                    )
+                    self.db.commit()
+                    return self.get(record["id"]) or {}, True
+                self.db.commit()
+                return state, False
+            now = time.time()
+            self.db.execute(
+                "INSERT INTO work(message_id,source,state,updated_at) VALUES(?,?,?,?)",
+                (record["id"], record["source"], "dispatching", now),
+            )
+            self.db.commit()
+            return self.get(record["id"]) or {}, True
+        except Exception:
+            self.db.rollback()
+            raise
 
     def route(self, source: str, target: str) -> str | None:
-        row=self.db.execute("SELECT thread_id FROM routes WHERE source=? AND target=?",(source,target)).fetchone()
+        row = self.db.execute(
+            "SELECT thread_id FROM routes WHERE source=? AND target=?",
+            (source, target),
+        ).fetchone()
         return str(row["thread_id"]) if row else None
 
     def bind_route(self, source: str, target: str, thread_id: str) -> None:
-        self.db.execute("INSERT INTO routes(source,target,thread_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(source,target) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at",(source,target,thread_id,time.time()))
+        self.db.execute(
+            """INSERT INTO routes(source,target,thread_id,updated_at)
+               VALUES(?,?,?,?)
+               ON CONFLICT(source,target) DO UPDATE SET
+                 thread_id=excluded.thread_id,
+                 updated_at=excluded.updated_at""",
+            (source, target, thread_id, time.time()),
+        )
         self.db.commit()
 
     def update(self, message_id: str, **values) -> dict:
@@ -178,8 +227,32 @@ class DiscordClient:
         )
         return str(value["id"])
 
+    def add_thread_member(self, thread_id: str, target_bot_id: str) -> None:
+        request = urllib.request.Request(
+            self.api_base + f"/channels/{int(thread_id)}/thread-members/{int(target_bot_id)}",
+            data=b"",
+            method="PUT",
+            headers={
+                "Authorization": f"Bot {self.token}",
+                "Content-Type": "application/json",
+                "User-Agent": "AGK-Station-Interagent/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status not in {200, 201, 204}:
+                    raise DispatchError("Discord target thread membership failed")
+        except urllib.error.HTTPError as exc:
+            raise DispatchError(f"Discord target thread membership failed: HTTP {exc.code}") from None
+        except OSError as exc:
+            raise DispatchError(f"Discord target thread membership failed: {type(exc).__name__}") from None
+
     def reuse_thread(self, thread_id: str) -> str:
-        value=self._request("PATCH",f"/channels/{int(thread_id)}",{"archived":False,"locked":False,"auto_archive_duration":60})
+        value = self._request(
+            "PATCH",
+            f"/channels/{int(thread_id)}",
+            {"archived":False,"locked":False,"auto_archive_duration":60},
+        )
         return str(value["id"])
 
     def post_handoff(self, thread_id: str, content: str, target_bot_id: str) -> str:
@@ -191,14 +264,18 @@ class DiscordClient:
         return str(value["id"])
 
     def wait_for_bot_reply(self, thread_id: str, target_bot_id: str, after_message_id: str) -> str:
-        deadline=time.time()+30
+        deadline=time.time()+600
         while time.time()<deadline:
             request=urllib.request.Request(self.api_base+f"/channels/{int(thread_id)}/messages?limit=20",headers={"Authorization":f"Bot {self.token}","User-Agent":"AGK-Station-Interagent/1.0"})
             try:
                 with urllib.request.urlopen(request,timeout=10) as response: rows=json.loads(response.read() or b"[]")
             except (OSError,ValueError): rows=[]
             for row in rows if isinstance(rows,list) else []:
-                if str(row.get("id") or "")>str(after_message_id) and str((row.get("author") or {}).get("id") or "")==str(target_bot_id):
+                if (
+                    str(row.get("id") or "") > str(after_message_id)
+                    and str((row.get("author") or {}).get("id") or "") == str(target_bot_id)
+                    and is_final_verdict(str(row.get("content") or ""))
+                ):
                     return str(row["id"])
             time.sleep(1)
         raise DispatchError("target bot did not accept the thread handoff")
@@ -289,20 +366,32 @@ class Dispatcher:
 
     def dispatch(self, raw_record: dict) -> dict:
         record = validate_record(raw_record)
-        state = self.store.reserve(record)
-        if state.get("state") == "accepted" and state.get("thread_id") and state.get("thread_message_id"):
-            return state
+        state, claimed = self.store.claim(record)
+        if not claimed:
+            if state.get("state") == "accepted" and state.get("thread_id") and state.get("thread_message_id"):
+                return state
+            raise DispatchError("inter-agent handoff is already being dispatched")
         thread_id = state.get("thread_id")
         if not thread_id:
-            pair_thread=self.store.route(record["source"],record["target"])
+            pair_thread = self.store.route(record["source"], record["target"])
             if pair_thread:
-                thread_id=self.discord.reuse_thread(pair_thread)
+                thread_id = self.discord.reuse_thread(pair_thread)
+                next_state = "thread-reused"
             else:
-                thread_id = self.discord.create_thread(self.parent_channel_id,f"{record['source'].upper()} → {record['target'].upper()} · handoffs")
-                self.store.bind_route(record["source"],record["target"],thread_id)
-            state = self.store.update(record["id"],thread_id=thread_id,state="thread-reused" if pair_thread else "thread-created")
+                thread_id = self.discord.create_thread(
+                    self.parent_channel_id,
+                    f"{record['source'].upper()} → {record['target'].upper()} · handoffs",
+                )
+                self.store.bind_route(record["source"], record["target"], thread_id)
+                next_state = "thread-created"
+            state = self.store.update(
+                record["id"],
+                thread_id=thread_id,
+                state=next_state,
+            )
         thread_message_id = state.get("thread_message_id")
         if not thread_message_id:
+            self.discord.add_thread_member(thread_id, self.target_bot_id)
             content="\n".join([
                 f"<@{self.target_bot_id}>",
                 f"**Inter-agent request · {record['source'].upper()} → {record['target'].upper()}**",
@@ -311,7 +400,8 @@ class Dispatcher:
                 "",
                 record["body"],
                 "",
-                "Acknowledge here, then post progress and a final PASS/PARTIAL/BLOCKED verdict in this thread.",
+                "Execute the requested work in this thread using the necessary tools. Never synthesize tool output or claim an action you did not execute.",
+                "Post progress after substantive steps. Finish with a separate final line beginning exactly `Final verdict: PASS`, `Final verdict: PARTIAL`, or `Final verdict: BLOCKED`.",
             ])
             thread_message_id=self.discord.post_handoff(thread_id,content,self.target_bot_id)
             state=self.store.update(record["id"],thread_message_id=thread_message_id,state="delivered")

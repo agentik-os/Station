@@ -17,6 +17,14 @@ def test_candidate_requirement_extraction_preserves_actionable_lines():
     assert any("must never start backlog" in row for row in rows)
 
 
+def test_granted_standing_owner_authority_is_not_misclassified_as_a_human_gate():
+    auditor = load(AUDITOR, "recovery_auditor_authority_test")
+    assert auditor.requires_human_gate("Owner authorization granted for safe internal A0-A3 work") is False
+    assert auditor.requires_human_gate("Standing owner authorization: create the isolated profile") is False
+    assert auditor.requires_human_gate("Requires Gareth approval before new spend") is True
+    assert auditor.requires_human_gate("OAuth consent must be completed by the owner") is True
+
+
 def load(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader

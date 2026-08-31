@@ -10,9 +10,10 @@ def load():
  module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module
 
 class Discord:
- def __init__(self): self.created=[]; self.posts=[]; self.reused=[]
+ def __init__(self): self.created=[]; self.posts=[]; self.reused=[]; self.members=[]
  def create_thread(self,parent,name): self.created.append((parent,name)); return "thread-pair"
  def reuse_thread(self,thread): self.reused.append(thread); return thread
+ def add_thread_member(self,thread,target): self.members.append((thread,target))
  def post_handoff(self,thread,content,target): self.posts.append((thread,content,target)); return f"message-{len(self.posts)}"
  def wait_for_bot_reply(self,*args): return f"reply-{len(self.posts)}"
 
@@ -45,6 +46,7 @@ def test_pair_reuses_one_thread_for_multiple_handoffs(tmp_path):
  first=dispatcher.dispatch(record("a","first")); second=dispatcher.dispatch(record("b","second"))
  assert first["thread_id"]==second["thread_id"]=="thread-pair"
  assert len(discord.created)==1 and discord.reused==["thread-pair"]
+ assert discord.members==[("thread-pair","bot"),("thread-pair","bot")]
  assert len(discord.posts)==2
 
 def test_threads_auto_archive_after_one_hour():

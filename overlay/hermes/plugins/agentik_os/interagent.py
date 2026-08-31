@@ -17,9 +17,9 @@ INTERAGENT_TOOL_SCHEMA = {
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": ["list", "send", "inbox", "ack"]},
-            "target": {"type": "string", "enum": ["operator", "agentik", "mission", "private", "collective"]},
-            "mode": {"type": "string", "enum": ["note", "delegate"], "description": "note stores a quiet inbox message with no Discord thread; delegate creates/reuses an inter-agent mission thread."},
-            "message": {"type": "string", "description": "Non-secret team message or delegated mission (1-4000 characters)."},
+            "target": {"type": "string", "pattern": "^(operator|agentik|mission|private|collective|os:[a-z0-9]+(?:-[a-z0-9]+)*)$", "description": "Main agent ID or dynamic OS target such as os:mindset-os."},
+            "message": {"type": "string", "description": "Non-secret team message (1-4000 characters)."},
+            "mode": {"type": "string", "enum": ["note", "delegate"], "description": "delegate creates a target work thread (default); note is inbox-only."},
             "message_id": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         },
@@ -33,6 +33,9 @@ def broker_available() -> bool:
 
 
 def request(payload: dict) -> dict:
+    payload = dict(payload)
+    if Path(os.environ.get("HERMES_HOME", "")).name == "collective":
+        payload["station_profile"] = "collective"
     raw = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
     if len(raw) > 16384:
         raise ValueError("inter-agent request too large")
@@ -54,7 +57,7 @@ def request(payload: dict) -> dict:
 def handle_interagent(args: dict, **_kwargs) -> str:
     action = str(args.get("action") or "").strip().lower()
     payload = {"action": action}
-    for key in ("target", "mode", "message", "message_id", "limit"):
+    for key in ("target", "message", "mode", "message_id", "limit"):
         if args.get(key) is not None:
             payload[key] = args[key]
     try:
@@ -69,9 +72,10 @@ def handle_interagent(args: dict, **_kwargs) -> str:
 def interagent_prompt(_session_info: dict | None = None) -> str:
     return (
         "Station team communication: Operator, MISSION, Agentik, Private and Collective can contact "
-        "one another with the station_interagent tool. Operator, Agentik and Private are peer Station "
+        "one another with the station_interagent tool. Operator, Agentik, MISSION and Private are peer Station "
         "Directors and application-level admins. Use Operator only for root-owned host mechanics when "
-        "required, without turning those mechanics into an approval bottleneck. Send only "
+        "required, without turning those mechanics into an approval bottleneck; the standing owner "
+        "authorization covers A0-A3 reversible Station work. Send only "
         "explicit non-secret messages; the broker never grants access to another Linux user's files, "
         "memory or private state. Use send for handoffs/questions, inbox to read your own queue, and ack "
         "after processing. Every peer request MUST use this tool: never write a peer bot prompt as your own "

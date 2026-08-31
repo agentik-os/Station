@@ -3483,15 +3483,18 @@ class DiscordAdapter(BasePlatformAdapter):
                 plugin_names = set(); agentik_names = set()
             core_priority = {
                 "station-sessions": 0,
+                "station-recovery": 0,
+                "recap": 0,
                 "clear": 0,
                 "panel": 1,
                 "account": 2,
                 "model": 3,
             }
             core_names = {
-                "station-sessions", "help", "status", "new", "stop", "resume", "sessions", "model",
+                "station-sessions", "station-recovery", "recap", "panel",
+                "help", "status", "new", "stop", "resume", "sessions", "model",
                 "sethome", "clear", "undo", "approve", "deny", "queue",
-                "background", "context", "skills", "mcp", "restart", "version", "account", "panel",
+                "background", "context", "skills", "mcp", "restart", "version", "account",
             }
             desired_payloads.sort(key=lambda item: (
                 core_priority.get(str(item.get("name", "")).lower(), 10)

@@ -12,14 +12,22 @@ def _rules(path: Path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]
 
 
-def test_station_rule_defines_three_peer_directors_without_operator_bottleneck():
+def test_station_rule_defines_all_operational_directors_without_operator_bottleneck():
     by_id = {rule["id"]: rule for rule in _rules(ROOT / "overlay/config/rules.yaml")}
     rule = by_id["station-three-directors-authority"]
     content = rule["content"]
     assert rule["enabled"] is True
-    assert all(name in content for name in ("Operator", "Agentik", "Private"))
+    assert all(name in content for name in ("Operator", "Agentik", "MISSION", "Private"))
     assert "without asking Operator" in content
     assert "Operator performs the bounded mechanics" in content
+    assert "create or manage Discord channels" in content
+    assert "isolated Hermes profiles" in content
+    assert "persistent sessions and state" in content
+    assert "AGK/RMUX runtimes" in content
+    assert "natural-chat routing" in content
+    assert "safe reload, rollback and Completion Oracle" in content
+    assert "`/os` remains the Discord installer" in content
+    assert "never replace an existing profile, state store, secret or `.env`" in content
     assert "Escalate directly to Gareth" in content
     assert "never crosses client boundaries" in content
 
@@ -29,6 +37,7 @@ def test_team_rule_no_longer_calls_operator_global_admin():
     content = by_id["station-capabilities-and-team-communication"]["content"]
     assert "Operator is global admin" not in content
     assert "peer Station Directors" in content
+    assert "MISSION" in content
 
 
 def test_hermes_rule_section_is_bounded_and_keeps_director_authority(monkeypatch):
@@ -41,4 +50,6 @@ def test_hermes_rule_section_is_bounded_and_keeps_director_authority(monkeypatch
     assert len(prompt) <= 900
     assert "peer Station Directors" in prompt
     assert "A0-A3" in prompt
+    assert "MISSION" in prompt
+    assert "standing owner authorization" in prompt
     assert "complete-request-ledger" not in prompt

@@ -147,20 +147,21 @@ rules:
       whenever an OS operation is actionable. `/station-sessions` monitors Hermes/AGK sessions;
       `/panel` opens the command center; `/settings` manages account usage. Operator, MISSION,
       Agentik, Private and Collective are one team and communicate through `station_interagent`.
-      Operator, Agentik and Private are peer Station Directors and application-level admins; Operator
+      Operator, Agentik, MISSION and Private are peer Station Directors and application-level admins; Operator
       performs privileged host mechanics when technically required but is not a second approval
       authority. Communication and Director status never grant access to another Linux user's files,
       sessions, memory, credentials or private state.
 
   - id: station-three-directors-authority
-    title: Treat Operator, Agentik and Private as peer Station Directors
+    title: Treat all operational agents as peer Station Directors
     enabled: true
     providers: ["*"]
     content: >-
-      Operator, Agentik and Private are Gareth's three peer Station Directors and application-level
-      administrators. Each may decide and execute A0-A3 safe internal work without asking Operator for
-      approval. If host privileges are required, Operator performs the bounded mechanics without creating
-      another approval round-trip. Escalate directly to Gareth only for secrets or OAuth consent, new spend,
-      legal or binding commitments, publication as Gareth, production cutover, irreversible deletion or new
-      access grants. Director status never grants sudo to other Linux users or access to another profile's
-      files, sessions, memory, credentials or private state, and never crosses client boundaries.
+      Operator, Agentik, MISSION and Private are Station Directors/admins. The standing owner authorization
+      covers A0-A3 reversible work without asking Operator: host/root; create or manage Discord channels; isolated
+      Hermes profiles; agents/skills; persistent sessions and state; AGK/RMUX runtimes; natural-chat routing;
+      controlled activation; safe reload, rollback and Completion Oracle. Operator performs the bounded mechanics,
+      not a second approval. `/os` remains the Discord installer; never replace an existing profile, state store,
+      secret or `.env`. Escalate directly to Gareth only for secret/OAuth consent, spend, legal commitments,
+      publication as Gareth, irreversible deletion or external access. Director authority never crosses client
+      boundaries or another profile's private state.

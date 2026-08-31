@@ -24,6 +24,23 @@ sha256_text = _harness.sha256_text
 _ACTIONABLE = re.compile(r"(?i)\b(must|should|need(?:s|ed)?|require(?:s|d)?|create|build|add|fix|verify|ensure|implement|deploy|publish|never|only humans?|do not|don't)\b")
 _BULLET = re.compile(r"^\s*(?:[-*+] |\[[ xX]\] |\d+[.)]\s+)(.+?)\s*$")
 
+def requires_human_gate(text: str) -> bool:
+    """Distinguish a granted standing authority from a still-pending human gate."""
+    value = str(text or "").strip()
+    if re.search(
+        r"(?i)\b(?:standing\s+)?owner\s+authori[sz]ation\s+(?:is\s+)?granted\b|"
+        r"\bauthori[sz]ed\s+by\s+(?:the\s+)?owner\b|\bowner[- ]approved\b|\bpre[- ]?authori[sz]ed\b",
+        value,
+    ):
+        return False
+    return bool(re.search(
+        r"(?i)\b(?:requires?|needs?|pending|await(?:s|ing)?|must\s+(?:be\s+)?)\b.{0,40}"
+        r"\b(?:human|gareth|cto|owner|approval|consent|authori[sz]ation)\b|"
+        r"\b(?:oauth\s+consent|human_required|owner_gate)\b",
+        value,
+    ))
+
+
 def extract_candidate_requirements(text: str, limit: int = 200) -> list[str]:
     result=[]; seen=set()
     for raw in str(text or "").splitlines():
@@ -233,7 +250,7 @@ def audit_profile(*, profile: str, state_db: Path, completion_root: Path,
                 "SELECT 1 FROM requirements WHERE mission_id=? AND text=?", (mission_id, requirement)
             ).fetchone()
             if not exists:
-                human_gate = bool(re.search(r"(?i)\b(human|CTO|owner|approval|approve|authorize)\b", requirement))
+                human_gate = requires_human_gate(requirement)
                 store.add_requirement(
                     prompt_id, requirement, mission_id=mission_id, type="CANDIDATE",
                     provenance=f"user-message:{row['id']}#candidate-{index}", human_gate=human_gate,

@@ -42,6 +42,12 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     assert "agent.restart_drain_timeout 1800" in shared
     assert "agent.restart_after_turn_timeout 1800" in shared
     assert "TimeoutStopSec=1860" in shared
+    assert '"$repo_root/hermes-core/gateway/$core_file"' in overlay_install
+    assert '"$install_root/hermes-core/gateway/$core_file"' in shared
+    for core_file in ("run.py", "turn_context.py", "display_config.py", "station_action_message.py"):
+        assert core_file in overlay_install and core_file in shared
+    for progress_file in ("agent/agent_init.py", "agent/tool_executor.py", "run_agent.py"):
+        assert progress_file in overlay_install and progress_file in shared
     safe_reload=(ROOT/"overlay/scripts/station_safe_gateway_reload.py").read_text()
     assert "write_drain_request" in safe_reload and "clear_drain_request" in safe_reload
     assert "active work did not drain; reload cancelled without interrupting it" in safe_reload
@@ -53,7 +59,8 @@ def test_online_installer_and_bootstrap_are_safe_and_complete():
     assert "1541816910587625492,1541817649661747351,1541817976586637382,1541817162241540126,1541131574509314209" in shared
     broker=(ROOT/"overlay/scripts/station_interagent_broker.py").read_text()
     dispatch=(ROOT/"overlay/scripts/station_interagent_work_dispatch.py").read_text()
-    assert "ThreadPoolExecutor(max_workers=3" in broker and "queue_interagent_work(record)" in broker
+    assert "ThreadPoolExecutor(max_workers=3" in broker and "queue_interagent_work(record, store=store)" in broker
+    assert "recover_pending_forever" in broker and "_INFLIGHT_IDS" in broker
     assert "post_handoff" in dispatch and "wait_for_bot_reply" in dispatch
     assert "RuntimeLauncher()" not in dispatch
     assert "station doctor" in bootstrap
@@ -78,3 +85,49 @@ def test_discord_rotation_registry_covers_station_bots():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert set(module.TARGETS) == {"operator", "agentik", "mission", "private", "collective", "nutrition-os"}
+
+
+def test_nutrition_safe_reload_targets_canonical_private_runtime():
+    station = (ROOT / "bin/station").read_text()
+    assert "nutrition-os) user=private; unit=hermes-gateway-nutrition-os.service; home=/home/private/.hermes/profiles/nutrition-os" in station
+    assert "nutrition-os) user=operator; unit=hermes-gateway-nutrition-os.service; home=/home/operator/.hermes/profiles/nutrition-os" not in station
+
+
+def test_every_station_registry_owns_nutrition_under_private():
+    paths = [
+        ROOT / "overlay/scripts/rotate_discord_token.py",
+        ROOT / "overlay/scripts/completion_oracle_gate.py",
+        ROOT / "overlay/scripts/recovery_router.py",
+        ROOT / "overlay/scripts/completion_harness.py",
+        ROOT / "overlay/scripts/approval_gate.py",
+        ROOT / "overlay/scripts/fleet_recovery_auditor.py",
+    ]
+    for path in paths:
+        source = path.read_text()
+        assert "/home/private/.hermes/profiles/nutrition-os" in source, path
+        assert "/home/operator/.hermes/profiles/nutrition-os" not in source, path
+
+
+def test_nutrition_specialist_is_private_owned_without_legacy_launcher():
+    manifest = (ROOT / "overlay/hermes/agents/nutrition-specialist/agent.yaml").read_text()
+    assert "owner_environment: private" in manifest
+    assert "scope: [private]" in manifest
+    assert "profile: nutrition-os" in manifest
+    assert "launcher:" not in manifest
+
+
+def test_specialized_agents_have_one_canonical_owner_and_valid_profile_binding():
+    agents = ROOT / "overlay/hermes/agents"
+    expected = {
+        "completion-oracle": ("operator", None),
+        "recovery-auditor": ("operator", None),
+        "master-os-builder": ("operator", "builder-os"),
+        "nutrition-specialist": ("private", "nutrition-os"),
+    }
+    import yaml
+    for agent_id, (owner, profile) in expected.items():
+        manifest = yaml.safe_load((agents / agent_id / "agent.yaml").read_text())
+        assert manifest["owner_environment"] == owner
+        assert manifest["scope"] == [owner]
+        assert manifest.get("profile") == profile
+        assert not manifest.get("launcher")
