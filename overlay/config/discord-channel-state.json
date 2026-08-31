@@ -1,0 +1,51 @@
+{
+  "schema": "agk.discord-channel-state.v1",
+  "guild_id": "1541131439599386644",
+  "targets": [
+    {
+      "key": "operator",
+      "user": "operator",
+      "hermes_home": "/home/operator/.hermes",
+      "channel_id": "1541820137148260432",
+      "base_name": "operator",
+      "parent_id": "1541820192454082580",
+      "position": 3
+    },
+    {
+      "key": "agentik",
+      "user": "agentik",
+      "hermes_home": "/home/agentik/.hermes",
+      "channel_id": "1541820106479501322",
+      "base_name": "agentik",
+      "parent_id": "1541820192454082580",
+      "position": 4
+    },
+    {
+      "key": "mission",
+      "user": "mission",
+      "hermes_home": "/home/mission/.hermes",
+      "channel_id": "1541814383007764570",
+      "base_name": "mission",
+      "parent_id": "1541820192454082580",
+      "position": 5
+    },
+    {
+      "key": "private",
+      "user": "private",
+      "hermes_home": "/home/private/.hermes",
+      "channel_id": "1541820077278503072",
+      "base_name": "private",
+      "parent_id": "1541820192454082580",
+      "position": 6
+    },
+    {
+      "key": "collective",
+      "user": "agentik",
+      "hermes_home": "/home/agentik/.hermes/profiles/collective",
+      "channel_id": "1541847685680603387",
+      "base_name": "discord",
+      "parent_id": "1541820192454082580",
+      "position": 7
+    }
+  ]
+}

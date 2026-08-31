@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/mission/.hermes/profiles/collective
-ExecStart=/usr/local/lib/agk-terminal/scripts/github_stars_forum_watcher.py --profile-home /home/mission/.hermes/profiles/collective
+WorkingDirectory=/home/agentik/.hermes/profiles/collective
+ExecStart=/usr/local/lib/agk-terminal/scripts/github_stars_forum_watcher.py --profile-home /home/agentik/.hermes/profiles/collective
 NoNewPrivileges=true
 PrivateTmp=true

@@ -90,7 +90,7 @@ Use web_search/web_extract and only verifiable first-party release/news pages, o
             capture_output=True,
             check=False,
             timeout=660,
-            env={**os.environ, "HOME": "/home/mission", "HERMES_HOME": str(home)},
+            env={**os.environ, "HOME": "/home/agentik", "HERMES_HOME": str(home)},
         )
     finally:
         prompt_path.unlink(missing_ok=True)
@@ -131,7 +131,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    home = Path(os.environ.get("HERMES_HOME") or "/home/mission/.hermes/profiles/collective")
+    home = Path(os.environ.get("HERMES_HOME") or "/home/agentik/.hermes/profiles/collective")
     state_path = home / "collective-news-state.json"
     lock_path = home / "collective-news.lock"
     lock_path.touch(mode=0o600, exist_ok=True)

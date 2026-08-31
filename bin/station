@@ -38,7 +38,7 @@ case "$command" in
       agentik) user=agentik; unit=hermes-gateway.service; home=/home/agentik/.hermes ;;
       mission) user=mission; unit=hermes-gateway.service; home=/home/mission/.hermes ;;
       private) user=private; unit=hermes-gateway.service; home=/home/private/.hermes ;;
-      collective) user=mission; unit=hermes-gateway-collective.service; home=/home/mission/.hermes/profiles/collective ;;
+      collective) user=agentik; unit=hermes-gateway-collective.service; home=/home/agentik/.hermes/profiles/collective ;;
       nutrition-os) user=operator; unit=hermes-gateway-nutrition-os.service; home=/home/operator/.hermes/profiles/nutrition-os ;;
       dentistrygpt) user=mission; unit=hermes-gateway-clientdentistrygptee881c.service; home=/home/mission/.hermes/profiles/clientdentistrygptee881c ;;
       *) echo "unknown gateway target" >&2; exit 2 ;;

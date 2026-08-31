@@ -9,7 +9,7 @@ from .store import ControlStore
 DOMAIN_COMMANDS = {
     "agentik": ("org", "portfolio", "product", "build", "release", "content", "growth", "community", "research"),
     "mission": ("deliverable", "deploy", "report"),
-    "collective": ("deliverable", "deploy", "report"),
+    "collective": ("community", "content", "growth", "research"),
     "private": ("journal", "decision", "routine", "idea", "review"),
 }
 
@@ -43,7 +43,7 @@ _TRANSITIONS = {
 
 class DomainCommandService:
     def __init__(self, environment: str, store: ControlStore):
-        self.environment = "mission" if environment == "collective" else environment
+        self.environment = "agentik" if environment == "collective" else environment
         self.store = store
 
     def dispatch(self, kind: str, argv: list[str]) -> str:

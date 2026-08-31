@@ -323,7 +323,7 @@ class StationSessionController:
 
     @staticmethod
     def _owner(paths: EnvironmentPaths) -> str:
-        return "mission" if paths.name == "collective" else paths.name
+        return "agentik" if paths.name == "collective" else paths.name
 
     def _run_as_owner(self, paths: EnvironmentPaths, argv: list[str], timeout: int = 30, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
         owner = self._owner(paths)
@@ -476,19 +476,19 @@ def _profile_state_dbs(root: Path, exclude: set[str] | None = None) -> list[tupl
 
 def environment_paths(name: str) -> EnvironmentPaths:
     if name == "collective":
-        home = Path("/home/mission")
+        home = Path("/home/agentik")
         return EnvironmentPaths(name, home, home / ".agentik/runtime.db", [("collective", home / ".hermes/profiles/collective/state.db")])
     if name not in {"operator", "agentik", "mission", "private"}:
         raise ControlError("unknown environment")
     home = Path(f"/home/{name}")
-    excluded = {"collective"} if name == "mission" else set()
+    excluded = {"collective"} if name == "agentik" else set()
     return EnvironmentPaths(name, home, home / ".agentik/runtime.db", _profile_state_dbs(home / ".hermes", excluded))
 
 
 def default_environments() -> dict[str, EnvironmentPaths]:
     result = {"operator": environment_paths("operator")}
     for name in ("agentik", "mission", "private", "collective"):
-        home = Path("/home/mission") if name == "collective" else Path(f"/home/{name}")
+        home = Path("/home/agentik") if name == "collective" else Path(f"/home/{name}")
         result[name] = EnvironmentPaths(name, home, home / ".agentik/runtime.db", [])
     return result
 

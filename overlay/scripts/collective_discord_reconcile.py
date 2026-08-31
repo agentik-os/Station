@@ -35,7 +35,7 @@ Launch: **COLLECTIVE70** = −70% first month. Checkout: paste your Discord ID.
 
 
 def load_token() -> str:
-    home = Path(os.environ.get("HERMES_HOME") or "/home/mission/.hermes/profiles/collective")
+    home = Path(os.environ.get("HERMES_HOME") or "/home/agentik/.hermes/profiles/collective")
     for raw in (home / ".env").read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if line and not line.startswith("#") and "=" in line:

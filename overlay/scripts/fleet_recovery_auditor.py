@@ -16,7 +16,7 @@ PROFILES = (
     ("agentik", "agentik", "/home/agentik/.hermes"),
     ("mission", "mission", "/home/mission/.hermes"),
     ("private", "private", "/home/private/.hermes"),
-    ("collective", "mission", "/home/mission/.hermes/profiles/collective"),
+    ("collective", "agentik", "/home/agentik/.hermes/profiles/collective"),
     ("nutrition-os", "operator", "/home/operator/.hermes/profiles/nutrition-os"),
 )
 

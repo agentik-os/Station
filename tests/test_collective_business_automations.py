@@ -9,6 +9,8 @@ CORE = ROOT / "overlay" / "scripts" / "collective_automation_core.py"
 POLLER = ROOT / "overlay" / "scripts" / "collective_composio_poller.py"
 NEWS = ROOT / "overlay" / "scripts" / "collective_news_digest.py"
 RECON = ROOT / "overlay" / "scripts" / "collective_discord_reconcile.py"
+BROKER = ROOT / "overlay" / "scripts" / "station_interagent_broker.py"
+MIGRATE = ROOT / "overlay" / "scripts" / "migrate_collective_owner.py"
 PLUGIN = ROOT / "overlay" / "hermes" / "plugins" / "platforms" / "discord" / "agk_collective_membership.py"
 
 
@@ -177,6 +179,21 @@ def test_unrelated_stripe_session_never_fetches_line_items(monkeypatch):
     assert poller.mapped_checkout(session) is None
 
 
+def test_composio_requires_explicit_agentik_account_bindings(monkeypatch):
+    poller = load(POLLER, "collective_poller_account_binding")
+    monkeypatch.delenv("AGK_COMPOSIO_STRIPE_ACCOUNT_ID", raising=False)
+    try:
+        poller.composio_account("STRIPE_GET_ACCOUNT")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Stripe default Composio account was accepted")
+    monkeypatch.setenv("AGK_COMPOSIO_STRIPE_ACCOUNT_ID", "ca_AgentikStripe01")
+    monkeypatch.setenv("AGK_COMPOSIO_TYPEFORM_ACCOUNT_ID", "ca_AgentikTypeform01")
+    assert poller.composio_account("STRIPE_GET_ACCOUNT") == "ca_AgentikStripe01"
+    assert poller.composio_account("TYPEFORM_LIST_FORMS") == "ca_AgentikTypeform01"
+
+
 def test_composio_file_output_is_bounded_parsed_and_deleted(tmp_path, monkeypatch):
     poller = load(POLLER, "collective_poller_file_output")
     monkeypatch.setattr(poller, "COMPOSIO_ARTIFACT_ROOTS", (tmp_path,))
@@ -257,6 +274,25 @@ def test_news_weekday_and_daily_dedupe(tmp_path):
     assert 'text.find("AGK News —")' in NEWS.read_text()
 
 
+def test_composio_execution_forces_private_artifact_permissions(monkeypatch):
+    poller = load(POLLER, "collective_poller_private_artifacts")
+    monkeypatch.setenv("AGK_COMPOSIO_STRIPE_ACCOUNT_ID", "ca_agentik123")
+    observed = {}
+
+    class Result:
+        returncode = 0
+        stdout = '{"data": []}'
+
+    def fake_run(*args, **kwargs):
+        observed.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr(poller.subprocess, "run", fake_run)
+    assert poller.composio_execute("STRIPE_LIST_CHECKOUT_SESSIONS", {}) == []
+    assert observed["preexec_fn"] is poller.private_composio_child_setup
+    assert "UMask=0077" in (ROOT / "overlay" / "systemd" / "agk-collective-composio.service").read_text()
+
+
 def test_packaging_installs_collective_runtime_and_exact_timers():
     combined = (ROOT / "overlay" / "install.sh").read_text() + (ROOT / "overlay" / "scripts" / "install-shared-hermes.sh").read_text()
     for name in (
@@ -272,6 +308,16 @@ def test_packaging_installs_collective_runtime_and_exact_timers():
     assert "OnUnitActiveSec=1min" in composio_timer
     news_timer = (ROOT / "overlay" / "systemd" / "agk-collective-news.timer").read_text()
     assert "OnCalendar=Mon..Fri" in news_timer
+    news_service = (ROOT / "overlay" / "systemd" / "agk-collective-news.service").read_text()
+    assert "WorkingDirectory=/home/agentik" in news_service
+    tmpfiles = (ROOT / "overlay" / "tmpfiles.d" / "agk-composio.conf").read_text()
+    assert "d /tmp/composio 1777 root root -" in tmpfiles
+    installer = (ROOT / "overlay" / "install.sh").read_text()
+    tmpfiles_install = 'install -m 0644 "$repo_root/tmpfiles.d/agk-composio.conf" /etc/tmpfiles.d/agk-composio.conf'
+    assert tmpfiles_install in installer
+    assert installer.rfind('if [ "$system_install" = true ]; then', 0, installer.index(tmpfiles_install)) != -1
+    assert 'install -m 0644 "$repo_root/config/discord-channel-state.json" "$install_root/config/discord-channel-state.json"' in installer
+    assert "systemd-tmpfiles --create" in installer
 
 
 def test_adapter_registers_collective_listener_and_panel():
@@ -308,3 +354,242 @@ def test_sign_card_reconciler_removes_reaction_consent_and_versions_v2():
     assert "partnerships-v2-2026-08-29" in raw
     assert components[0]["components"][0]["content"].startswith("Three steps, or react")
     assert reconcile.canonical_sign_components(updated) == updated
+
+
+def test_collective_is_owned_by_agentik_never_mission():
+    files = [
+        ROOT / "bin" / "station",
+        ROOT / "overlay" / "scripts" / "install-shared-hermes.sh",
+        ROOT / "overlay" / "scripts" / "rotate_discord_token.py",
+        ROOT / "overlay" / "scripts" / "recovery_router.py",
+        ROOT / "overlay" / "scripts" / "station_interagent_broker.py",
+        ROOT / "overlay" / "scripts" / "completion_oracle_gate.py",
+        ROOT / "overlay" / "scripts" / "approval_gate.py",
+        ROOT / "overlay" / "scripts" / "completion_harness.py",
+        ROOT / "overlay" / "scripts" / "fleet_recovery_auditor.py",
+        ROOT / "overlay" / "scripts" / "collective_composio_poller.py",
+        ROOT / "overlay" / "scripts" / "collective_news_digest.py",
+        ROOT / "overlay" / "scripts" / "collective_discord_reconcile.py",
+        ROOT / "overlay" / "scripts" / "github_stars_forum_watcher.py",
+        ROOT / "overlay" / "scripts" / "migrate_collective_owner.py",
+        ROOT / "overlay" / "hermes" / "plugins" / "platforms" / "discord" / "agk_collective_membership.py",
+        ROOT / "overlay" / "hermes" / "plugins" / "platforms" / "discord" / "agk_session_control.py",
+        ROOT / "overlay" / "systemd" / "agk-github-stars-forum.service",
+        ROOT / "overlay" / "systemd" / "agk-collective-composio.service",
+        ROOT / "overlay" / "systemd" / "agk-collective-news.service",
+        ROOT / "overlay" / "config" / "discord-channel-state.json",
+    ]
+    combined = "\n".join(path.read_text() for path in files)
+    assert "/home/agentik/.hermes/profiles/collective" in combined
+    assert "/home/mission/.hermes/profiles/collective" not in combined
+    assert 'collective) user=agentik' in (ROOT / "bin" / "station").read_text()
+    manifest = __import__("json").loads((ROOT / "overlay" / "config" / "discord-channel-state.json").read_text())
+    collective = next(target for target in manifest["targets"] if target["key"] == "collective")
+    assert collective["user"] == "agentik"
+    assert collective["hermes_home"] == "/home/agentik/.hermes/profiles/collective"
+
+
+def test_collective_interagent_routes_and_authenticates_as_agentik():
+    broker = load(BROKER, "collective_interagent_owner")
+    argv, env = broker.notification_command("collective")
+    assert argv[argv.index("--reuid") + 1] == "agentik"
+    assert env["HOME"] == "/home/agentik"
+    assert env["HERMES_HOME"] == "/home/agentik/.hermes/profiles/collective"
+    mapping = {1001: "agentik", 1002: "mission"}
+    collective_env = lambda _pid: "/home/agentik/.hermes/profiles/collective"
+    default_env = lambda _pid: "/home/agentik/.hermes"
+    assert broker.source_for_peer(10, 1001, mapping, collective_env) == "collective"
+    assert broker.source_for_peer(11, 1001, mapping, default_env) == "agentik"
+    assert broker.source_for_peer(12, 1002, mapping, collective_env) == "mission"
+
+
+def test_collective_has_agentik_community_semantics_and_no_client_paths(tmp_path, monkeypatch):
+    plugin_root = ROOT / "overlay" / "hermes" / "plugins"
+    sys.path.insert(0, str(plugin_root))
+    import types
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_config = types.ModuleType("hermes_cli.config")
+    agentik_package = types.ModuleType("agentik_os")
+    setattr(agentik_package, "__path__", [str(plugin_root / "agentik_os")])
+    setattr(hermes_config, "read_raw_config", lambda: {})
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", hermes_config)
+    monkeypatch.setitem(sys.modules, "agentik_os", agentik_package)
+    from agentik_os.commands import AgentikCommandService
+    from agentik_os.domain import DOMAIN_COMMANDS
+    from agentik_os.paths import PathResolver
+    from agentik_os.store import ControlStore
+
+    resolver = PathResolver("collective", tmp_path)
+    service = AgentikCommandService("collective", ControlStore(tmp_path / "control.db"), resolver)
+    assert service.data_environment == "agentik"
+    assert service.domain.environment == "agentik"
+    assert "client" not in service.command_names
+    for command in ("deliverable", "deploy", "report"):
+        assert command not in service.command_names
+    for command in ("community", "content", "growth", "research"):
+        assert command in DOMAIN_COMMANDS["collective"]
+    try:
+        resolver.client("dentistry")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("Collective resolved a Mission client path")
+    assert resolver.project("community-roadmap") == tmp_path / "workspace" / "projects" / "community-roadmap"
+
+
+def test_collective_cutover_moves_only_token_and_has_native_rollback():
+    migrate = load(MIGRATE, "collective_owner_cutover")
+    assert migrate.APP_ID == "1541131574509314209"
+    assert migrate.CONTROL_GUILD_ID == "1541131439599386644"
+    assert migrate.HOME_CHANNEL_ID == "1541847685680603387"
+    assert migrate.COMMUNITY_GUILD_ID == "1350170767366688830"
+    assert migrate.FORUM_CHANNEL_ID == "1541222874226888804"
+    token = "A" * 40
+    source = "KEEP=value\nDISCORD_BOT_TOKEN=" + token + "\nOTHER=value\n"
+    extracted, without = migrate.extract_token(source)
+    assert extracted == token
+    assert "DISCORD_BOT_TOKEN" not in without
+    migrate.validate_source_without_discord(without)
+    spaced_source = "KEEP=value\nDISCORD_BOT_TOKEN = " + token + "\n"
+    spaced_token, spaced_without = migrate.extract_token(spaced_source)
+    assert spaced_token == token
+    migrate.validate_source_without_discord(spaced_without)
+    with __import__("pytest").raises(RuntimeError, match="credential"):
+        migrate.extract_token(source + "DISCORD_TOKEN=legacy-value\n")
+    with __import__("pytest").raises(RuntimeError, match="duplicate"):
+        migrate.extract_token(source + "DISCORD_BOT_TOKEN = " + token + "\n")
+    for empty_duplicate in (
+        "DISCORD_BOT_TOKEN=\nDISCORD_BOT_TOKEN=" + token + "\n",
+        'DISCORD_BOT_TOKEN=""\nDISCORD_BOT_TOKEN = ' + token + "\n",
+    ):
+        with __import__("pytest").raises(RuntimeError, match="duplicate"):
+            migrate.extract_token(empty_duplicate)
+    target = migrate.target_env_content("EXISTING=value\n", token)
+    assert target.count("DISCORD_BOT_TOKEN=") == 1
+    assert "OPENROUTER" not in target
+    migrate.validate_target_env(target, token)
+    canonical = migrate.target_env_content(
+        "KEEP=value\nDISCORD_HOME_CHANNEL=wrong\nDISCORD_ALLOW_ALL_USERS=true\nDISCORD_REQUIRE_MENTION=true\n",
+        token,
+    )
+    assert "KEEP=value" in canonical
+    assert canonical.count("DISCORD_HOME_CHANNEL=") == 1
+    assert "DISCORD_HOME_CHANNEL=1541847685680603387" in canonical
+    assert "DISCORD_ALLOW_ALL_USERS=false" in canonical
+    assert "DISCORD_REQUIRE_MENTION=false" in canonical
+    migrate.validate_target_env(canonical, token)
+    for contaminated in (
+        "DISCORD_TOKEN=legacy-value\n",
+        "STRIPE_SECRET_KEY=client-value\n",
+        "TYPEFORM_TOKEN=client-value\n",
+        "COMPOSIO_API_KEY=client-value\n",
+        "DENTISTRY_WEBHOOK_SECRET=client-value\n",
+        "UNRELATED_PRIVATE_KEY=client-value\n",
+    ):
+        with __import__("pytest").raises(RuntimeError, match="credential"):
+            migrate.target_env_content(contaminated, token)
+    script = MIGRATE.read_text()
+    assert 'gateway_action(OLD_USER,OLD_ROOT,"stop")' in script
+    assert 'gateway_action(NEW_USER,NEW_ROOT,"start")' in script
+    assert "shutil.copy" not in script
+    assert "copyfile" not in script
+    assert "active_agents() != 0" in script
+    assert "wait_gateway_state" in script
+    assert "writer_pid" in script
+    assert "NEW_FRAGMENT" in script
+    assert "freeze_old_automations" in script
+    for timer in ("agk-github-stars-forum.timer", "agk-collective-composio.timer", "agk-collective-news.timer"):
+        assert timer in script
+
+
+def test_collective_cutover_restores_both_envs_after_partial_target_write(tmp_path):
+    migrate = load(MIGRATE, "collective_owner_partial_restore")
+    token = "A" * 40
+    old_env = tmp_path / "old.env"
+    new_env = tmp_path / "new.env"
+    old_original = f"KEEP=old\nDISCORD_BOT_TOKEN={token}\n"
+    new_original = "KEEP=new\n"
+    old_env.write_text(old_original)
+    new_env.write_text(migrate.target_env_content(new_original, token))
+
+    migrate.restore_env_files(
+        old_env,
+        new_env,
+        old_original,
+        new_original,
+        __import__("os").getuid(),
+        __import__("os").getgid(),
+        __import__("os").getuid(),
+        __import__("os").getgid(),
+    )
+
+    assert old_env.read_text() == old_original
+    assert new_env.read_text() == new_original
+
+
+def test_collective_cutover_source_has_verified_success_and_rollback_invariants():
+    script = MIGRATE.read_text()
+    assert "restore_env_files(" in script
+    assert "verify_service_state(" in script
+    assert "verify_timer_states(" in script
+    assert 'expected_active="inactive"' in script
+    assert 'expected_unit_file="disabled"' in script
+    assert "rollback incomplete" in script
+    assert "moved=False" not in script
+    assert "if moved:" not in script
+
+
+def test_collective_cutover_second_env_write_failure_restores_exact_originals(tmp_path, monkeypatch):
+    migrate = load(MIGRATE, "collective_owner_fault_injection")
+    token = "A" * 40
+    old_env = tmp_path / "old.env"
+    new_env = tmp_path / "new.env"
+    old_original = f"KEEP=old\nDISCORD_BOT_TOKEN={token}\n"
+    new_original = "KEEP=new\n"
+    old_without = "KEEP=old\n"
+    new_with = migrate.target_env_content(new_original, token)
+    old_env.write_text(old_original)
+    new_env.write_text(new_original)
+    real_atomic_write = migrate.atomic_write
+    calls = 0
+
+    def fail_second(path, content, uid, gid):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected source write failure")
+        return real_atomic_write(path, content, uid, gid)
+
+    monkeypatch.setattr(migrate, "atomic_write", fail_second)
+    import os
+    with __import__("pytest").raises(OSError, match="injected source write failure"):
+        migrate.transfer_env_files(
+            old_env,
+            new_env,
+            old_original,
+            new_original,
+            old_without,
+            new_with,
+            os.getuid(),
+            os.getgid(),
+            os.getuid(),
+            os.getgid(),
+        )
+
+    assert old_env.read_text() == old_original
+    assert new_env.read_text() == new_original
+
+
+def test_installer_requires_explicit_collective_provisioning_and_never_restarts_mission_legacy():
+    script = (ROOT / "overlay" / "scripts" / "install-shared-hermes.sh").read_text()
+    assert "profile create collective" not in script
+    assert "gateway install --no-start-now" not in script
+    assert "Collective Agentik profile absent; explicit ownership provisioning/cutover required." in script
+    assert '[ "$user_name" = mission ] && [ "$unit_name" = hermes-gateway-collective.service ]' in script
+    assert "Collective Agentik profile provisioned; credential cutover required before activation." in script
+    assert "gateway_ready=true" in script
+    assert "composio_ready=$gateway_ready" in script
+    assert "AGK_COMPOSIO_STRIPE_ACCOUNT_ID=ca_" in script
+    assert "AGK_COMPOSIO_TYPEFORM_ACCOUNT_ID=ca_" in script
+    assert "[A-Za-z0-9_-]{8,}" in script

@@ -26,7 +26,7 @@ AGENTS = {
     "agentik": {"owner":"agentik","home":"/home/agentik/.hermes","channel":"1541820106479501322","bot":"1541817976586637382"},
     "mission": {"owner":"mission","home":"/home/mission/.hermes","channel":"1541814383007764570","bot":"1541817162241540126"},
     "private": {"owner":"private","home":"/home/private/.hermes","channel":"1541820077278503072","bot":"1541817649661747351"},
-    "collective": {"owner":"mission","home":"/home/mission/.hermes/profiles/collective","channel":"1541847685680603387","bot":"1541131574509314209"},
+    "collective": {"owner":"agentik","home":"/home/agentik/.hermes/profiles/collective","channel":"1541847685680603387","bot":"1541131574509314209"},
 }
 _WORK_POOL = ThreadPoolExecutor(max_workers=3, thread_name_prefix="interagent-thread")
 _SECRET = re.compile(r"(?i)(?:api[_-]?key|token|password|secret|authorization)\s*[:=]\s*\S{6,}|\bsk-[A-Za-z0-9_-]{8,}")
@@ -44,6 +44,24 @@ def source_for_uid(uid: int, mapping: dict[int, str] | None = None) -> str:
     source = (mapping or uid_map()).get(int(uid))
     if not source:
         raise BrokerError("unknown Station identity")
+    return source
+
+
+def peer_hermes_home(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{int(pid)}/environ").read_bytes()
+    except (OSError, ValueError):
+        return ""
+    for item in raw.split(b"\0"):
+        if item.startswith(b"HERMES_HOME="):
+            return item.split(b"=", 1)[1].decode("utf-8", "strict")
+    return ""
+
+
+def source_for_peer(pid: int, uid: int, mapping: dict[int, str] | None = None, environ_reader=peer_hermes_home) -> str:
+    source = source_for_uid(uid, mapping)
+    if source == "agentik" and environ_reader(pid) == "/home/agentik/.hermes/profiles/collective":
+        return "collective"
     return source
 
 
@@ -115,7 +133,7 @@ class MessageStore:
 def notification_command(target: str) -> tuple[list[str], dict[str, str]]:
     if target not in ENVIRONMENTS:
         raise BrokerError("unknown Station target")
-    owner = "mission" if target == "collective" else target
+    owner = "agentik" if target == "collective" else target
     home = f"/home/{owner}"
     hermes_home = f"{home}/.hermes/profiles/collective" if target == "collective" else f"{home}/.hermes"
     argv = ["/usr/bin/setpriv", "--reuid", owner, "--regid", owner, "--clear-groups", "/usr/local/bin/hermes", "send", "--to", "discord", "--file", "-", "--quiet"]
@@ -156,15 +174,13 @@ def queue_interagent_work(record: dict) -> bool:
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         peer = self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        _pid, uid, _gid = struct.unpack("3i", peer)
+        peer_pid, uid, _gid = struct.unpack("3i", peer)
         try:
-            source = source_for_uid(uid)
             raw = self.rfile.readline(16385)
             if len(raw) > 16384:
                 raise BrokerError("request too large")
             request = json.loads(raw)
-            if source == "mission" and request.get("station_profile") == "collective":
-                source = "collective"
+            source = source_for_peer(peer_pid, uid)
             action = str(request.get("action") or "")
             store: MessageStore = self.server.store
             if action == "send":

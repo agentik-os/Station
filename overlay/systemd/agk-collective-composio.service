@@ -5,15 +5,17 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=HOME=/home/mission
-Environment=HERMES_HOME=/home/mission/.hermes/profiles/collective
+Environment=HOME=/home/agentik
+Environment=HERMES_HOME=/home/agentik/.hermes/profiles/collective
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/agentik/.hermes/profiles/collective/composio-bindings.env
+UMask=0077
 ExecStart=/usr/bin/python3 /usr/local/lib/agk-terminal/scripts/collective_composio_poller.py
 TimeoutStartSec=180
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/mission/.hermes/profiles/collective /home/mission/.composio
+ReadWritePaths=/home/agentik/.hermes/profiles/collective /home/agentik/.composio
 LockPersonality=true
 MemoryDenyWriteExecute=true
