@@ -198,16 +198,27 @@ else
   echo "Collective Agentik profile absent; explicit ownership provisioning/cutover required."
 fi
 
-for profile_env in /home/*/.hermes/profiles/*/.env; do
-  [ -f "$profile_env" ] || continue
-  owner=$(stat -c %U "$profile_env")
-  python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
-  chown "$owner:$(id -gn "$owner")" "$profile_env"
-  profile_home=$(dirname "$profile_env")
-  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
-    "$official_dir/venv/bin/hermes" config set agent.restart_drain_timeout 1800 >/dev/null
-  sudo -u "$owner" env HOME="$(getent passwd "$owner" | cut -d: -f6)" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
-    "$official_dir/venv/bin/hermes" config set agent.restart_after_turn_timeout 1800 >/dev/null
+for user_name in "${users[@]}"; do
+  home_dir=$(getent passwd "$user_name" | cut -d: -f6)
+  [ -n "$home_dir" ] || continue
+  profiles_root="$home_dir/.hermes/profiles"
+  [ -d "$profiles_root" ] || continue
+  while IFS= read -r -d '' profile_home; do
+    profile_env=$profile_home/.env
+    if [ -f "$profile_env" ]; then
+      python3 "$install_root/scripts/configure-station-discord-interagent.py" "$profile_env"
+      chown "$user_name:$(id -gn "$user_name")" "$profile_env"
+    fi
+    # Every named profile directory is a potential gateway home. Do not require
+    # config.yaml: newly provisioned and legacy bot homes must inherit the same
+    # response, action-message, notification, and Discord interaction contract.
+    sudo -u "$user_name" env HOME="$home_dir" HERMES_HOME="$profile_home" AGK_TERMINAL_ROOT="$install_root" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin:$home_dir/.local/bin" \
+      "$install_root/scripts/sync-hermes.sh"
+    sudo -u "$user_name" env HOME="$home_dir" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+      "$official_dir/venv/bin/hermes" config set agent.restart_drain_timeout 1800 >/dev/null
+    sudo -u "$user_name" env HOME="$home_dir" HERMES_HOME="$profile_home" PATH="$official_dir/venv/bin:/usr/local/bin:/usr/bin" \
+      "$official_dir/venv/bin/hermes" config set agent.restart_after_turn_timeout 1800 >/dev/null
+  done < <(find "$profiles_root" -mindepth 1 -maxdepth 1 -type d -print0)
 done
 
 for user_name in "${users[@]}"; do
