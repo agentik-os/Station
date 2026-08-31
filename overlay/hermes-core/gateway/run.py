@@ -6164,6 +6164,13 @@ class TurnRunner:
             if not ctx._status_adapter:
                 return ""
 
+            # Bind the structured decision to the exact blocked session before
+            # it enters either the gateway registry or a platform adapter. The
+            # model cannot safely supply this internal routing value itself.
+            surface_payload = dict(surface or {})
+            if surface_payload:
+                surface_payload["source_session"] = ctx.session_key or ""
+
             clarify_id = _uuid.uuid4().hex[:10]
             _clarify_mod.register(
                 clarify_id=clarify_id,
@@ -6171,7 +6178,7 @@ class TurnRunner:
                 question=question,
                 choices=list(choices) if choices else None,
                 multi_select=bool(multi_select),
-                surface=surface,
+                surface=surface_payload or None,
             )
 
             # For WeCom native streaming: finalize the current stream before
@@ -6226,7 +6233,7 @@ class TurnRunner:
                     session_key=ctx.session_key or "",
                     metadata={
                         **(ctx._status_thread_metadata or {}),
-                        **({"decision_surface": surface} if surface else {}),
+                        **({"decision_surface": surface_payload} if surface_payload else {}),
                     },
                 ),
                 ctx._loop_for_step,

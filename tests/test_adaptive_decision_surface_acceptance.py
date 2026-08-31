@@ -165,3 +165,15 @@ def test_installation_uses_one_canonical_adaptive_clarify_schema():
     assert '"$repo_root/hermes/tools/clarify_tool.py"' not in install
     assert '"$install_root/hermes-core/tools/clarify_tool.py"' in shared
     assert '"$install_root/hermes/tools/clarify_tool.py"' not in shared
+
+
+def test_gateway_binds_decision_surface_to_the_exact_source_session():
+    gateway = (ROOT / "overlay/hermes-core/gateway/run.py").read_text()
+    callback = gateway[
+        gateway.index("        def _clarify_callback_sync("):
+        gateway.index("        agent.clarify_callback = _clarify_callback_sync")
+    ]
+    assert "surface_payload = dict(surface or {})" in callback
+    assert 'surface_payload["source_session"] = ctx.session_key or ""' in callback
+    assert "surface=surface_payload or None" in callback
+    assert '{"decision_surface": surface_payload}' in callback
