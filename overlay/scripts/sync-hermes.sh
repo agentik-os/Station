@@ -155,10 +155,11 @@ discord_source=$install_root/hermes/plugins/platforms/discord
 discord_target=$hermes_home/plugins/platforms/discord
 mkdir -p "$(dirname "$discord_target")"
 rm -rf "$discord_target.new"
+cp -a "$discord_source" "$discord_target.new"
 if [ -d "$discord_target" ]; then
-  cp -a "$discord_target" "$discord_target.new"
-else
-  cp -a "$discord_source" "$discord_target.new"
+  # Canonical files fill missing dependencies; existing profile-owned extension
+  # modules are then preserved before the reviewed common core is overlaid.
+  cp -a "$discord_target"/. "$discord_target.new"/
 fi
 for common_file in \
   __init__.py adapter.py command_center.py interaction_surfaces.py \
