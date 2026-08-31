@@ -38,6 +38,11 @@ def test_sync_persists_quiet_discord_action_message_contract():
         assert f"hermes config set {setting}" in sync
     assert 'hermes_home=${HERMES_HOME:-${HOME:?}/.hermes}' in sync
     assert 'for plugin_path in agentik_os agk_discord_ui_policy platforms/discord' in sync
+    assert 'cp -a "$discord_target" "$discord_target.new"' in sync
+    assert "adapter.py command_center.py interaction_surfaces.py" in sync
+    assert 'install -m 0644 "$discord_source/$common_file"' in sync
+    assert 'rm -rf "$discord_target"' in sync
+    assert 'mv "$discord_target.new" "$discord_target"' in sync
     assert 'for agent_source in "$agent_source_root"/*' in sync
     assert 'agent_target=$hermes_home/agents/$(basename "$agent_source")' in sync
 
