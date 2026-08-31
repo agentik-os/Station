@@ -108,3 +108,13 @@ def test_adaptive_views_bind_callbacks_to_the_initiating_user():
     for view in (single, batch):
         assert "responder_user_id" in view
         assert "interaction_user_id == self.responder_user_id" in view
+
+
+def test_batch_view_is_registered_as_a_module_global():
+    source = ADAPTER.read_text(encoding="utf-8")
+    global_line = next(
+        line for line in source.splitlines()
+        if line.strip().startswith("global ExecApprovalView")
+    )
+
+    assert "AdaptiveBatchDecisionView" in global_line

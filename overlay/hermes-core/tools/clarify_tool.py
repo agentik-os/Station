@@ -325,7 +325,9 @@ def _batch_result(normalized: List[dict], answers: dict, timed_out: bool) -> str
     return json.dumps(result, ensure_ascii=False)
 
 
-def _run_batch(normalized: List[dict], callback, question: str) -> str:
+def _run_batch(
+    normalized: List[dict], callback, question: str, surface: Optional[dict] = None,
+) -> str:
     """Dispatch a validated batch to the platform callback.
 
     Batch-capable callbacks (a ``questions`` kwarg, detected by signature)
@@ -341,7 +343,19 @@ def _run_batch(normalized: List[dict], callback, question: str) -> str:
     are kept either way.
     """
     if _callback_accepts_questions(callback):
-        raw = callback(question, None, questions=normalized)
+        import inspect
+
+        kwargs: dict = {"questions": normalized}
+        try:
+            params = inspect.signature(callback).parameters
+            if surface and (
+                "surface" in params
+                or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            ):
+                kwargs["surface"] = surface
+        except (TypeError, ValueError):
+            pass
+        raw = callback(question, None, **kwargs)
 
         answers: dict = {}
         timed_out = False
@@ -367,6 +381,7 @@ def _run_batch(normalized: List[dict], callback, question: str) -> str:
     for entry in normalized:
         raw = _invoke_callback(
             callback, entry["question"], entry["choices"], entry["multi_select"],
+            surface=surface,
         )
         if raw is None or (isinstance(raw, str) and raw.strip() == TIMEOUT_RESPONSE):
             timed_out = True
@@ -436,7 +451,17 @@ def clarify_tool(
                     "Clarify tool is not available in this execution context."
                 )
             try:
-                return _run_batch(normalized, callback, str(question or "").strip())
+                surface = _build_decision_surface(
+                    question=str(question or "").strip(), title=title, state=state,
+                    context=context, established=established, target=target,
+                    consequences=consequences, recommendation=recommendation,
+                    default_action=default_action, risk=risk, kind=kind or "batch",
+                    includes=includes, excludes=excludes, rollback=rollback,
+                    context_detail=context_detail,
+                )
+                return _run_batch(
+                    normalized, callback, str(question or "").strip(), surface=surface,
+                )
             except Exception as exc:
                 return tool_error(f"Failed to get user input: {exc}")
         # Empty questions array → fall through to the single-question path.

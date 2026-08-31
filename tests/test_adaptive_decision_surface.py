@@ -385,3 +385,53 @@ def test_partial_structured_clarify_remains_a_valid_safe_simple_surface(surface)
     assert request.target == "Current request in this session"
     assert request.default_action == "No action; work remains paused until answered."
     assert all(choice.consequence for choice in request.choices)
+
+
+def test_open_text_surface_omits_empty_context_sections():
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Describe the intended result",
+        choices=(),
+        clarify_id="clarify-open",
+        source_session="discord:operator:open",
+        surface=None,
+    )
+
+    rendered = m.render_decision_surface(request).body
+    assert "CONTEXT\n" not in rendered
+    assert "ESTABLISHED\n" not in rendered
+
+
+def test_invalid_optional_kind_and_expiry_degrade_safely():
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose release",
+        choices=("Stable", "Hold"),
+        clarify_id="clarify-invalid-optional",
+        source_session="discord:operator:invalid",
+        surface={"kind": "not-a-kind", "expires_at": "not-a-date"},
+    )
+
+    assert request.kind is m.SurfaceKind.SIMPLE
+    assert request.expires_at is None
+
+
+def test_detail_truncation_never_exceeds_utf16_limit():
+    m = load()
+    request = m.DecisionRequest(
+        decision_id="detail-budget",
+        kind=m.SurfaceKind.COMPLEX,
+        title="Release",
+        state="Staged",
+        context="Context",
+        established=("Tests pass",),
+        target="Operator",
+        decision="Choose release",
+        choices=(m.DecisionChoice("stable", "Stable", "Activate stable"),),
+        default_action="Hold",
+        context_detail="😀" * 500,
+        source_session="discord:operator:detail",
+    )
+
+    rendered = m.render_decision_content(request, limit=300)
+    assert m.utf16_len(rendered) <= 300

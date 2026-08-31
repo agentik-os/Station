@@ -9391,6 +9391,12 @@ class DiscordAdapter(BasePlatformAdapter):
         """Send one typed adaptive decision while preserving gateway resolution."""
         if not self._client or not DISCORD_AVAILABLE:
             return SendResult(success=False, error="Not connected")
+        responder_user_id = str((metadata or {}).get("decision_user_id") or "")
+        if not responder_user_id:
+            return SendResult(
+                success=False,
+                error="Adaptive decision requires an initiating user id",
+            )
 
         def _choice_text(value: Any) -> str:
             if isinstance(value, str):
@@ -9430,9 +9436,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 allowed_role_ids=self._allowed_role_ids,
                 channel_id=str(target_id),
                 profile_id=self.name,
-                responder_user_id=str(
-                    (metadata or {}).get("decision_user_id") or ""
-                ),
+                responder_user_id=responder_user_id,
             )
             send_metadata = dict(metadata or {})
             return await self.send_decision(
@@ -9454,6 +9458,12 @@ class DiscordAdapter(BasePlatformAdapter):
         """Send one navigable Discord surface for a clarify question batch."""
         if not self._client or not DISCORD_AVAILABLE:
             return SendResult(success=False, error="Not connected")
+        responder_user_id = str((metadata or {}).get("decision_user_id") or "")
+        if not responder_user_id:
+            return SendResult(
+                success=False,
+                error="Adaptive decision requires an initiating user id",
+            )
 
         try:
             source_session = str(
@@ -9518,9 +9528,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 allowed_role_ids=self._allowed_role_ids,
                 channel_id=str(target_id),
                 profile_id=self.name,
-                responder_user_id=str(
-                    (metadata or {}).get("decision_user_id") or ""
-                ),
+                responder_user_id=responder_user_id,
             )
             return await self.send_decision(
                 chat_id, request, view=view, metadata=dict(metadata or {})
@@ -10992,7 +11000,7 @@ def _define_discord_view_classes() -> None:
     lazy install sets DISCORD_AVAILABLE=True but leaves the classes
     undefined, causing NameError on the first button interaction.
     """
-    global ExecApprovalView, SlashConfirmView, UpdatePromptView, ModelPickerView, AdaptiveDecisionView, ClarifyChoiceView, ChoicePickerView
+    global ExecApprovalView, SlashConfirmView, UpdatePromptView, ModelPickerView, AdaptiveDecisionView, AdaptiveBatchDecisionView, ClarifyChoiceView, ChoicePickerView
 
     class ExecApprovalView(discord.ui.View):
         """

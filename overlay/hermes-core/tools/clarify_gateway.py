@@ -52,8 +52,10 @@ def run_sequential_batch_fallback(
     timed_out = False
     for item in questions:
         response = ask(item)
-        if response is None or (
-            isinstance(response, str) and response.strip() == TIMEOUT_RESPONSE
+        response_text = response.strip() if isinstance(response, str) else ""
+        if response is None or response_text == TIMEOUT_RESPONSE or (
+            response_text.startswith("[user did not respond within ")
+            and response_text.endswith("]")
         ):
             timed_out = True
             break

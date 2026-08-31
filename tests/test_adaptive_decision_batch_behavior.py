@@ -72,6 +72,24 @@ def test_sequential_fallback_uses_exact_canonical_timeout_sentinel(monkeypatch):
     assert calls == ["q0"]
 
 
+def test_sequential_fallback_stops_on_gateway_bounded_wait_timeout(monkeypatch):
+    _install_clarify_timeout_module(monkeypatch)
+    questions = [
+        {"qid": "q0", "question": "First"},
+        {"qid": "q1", "question": "Second"},
+    ]
+    calls = []
+
+    def ask(item):
+        calls.append(item["qid"])
+        return "[user did not respond within 5m]"
+
+    result = json.loads(run_sequential_batch_fallback(questions, ask))
+
+    assert result == {"answers": {}, "timed_out": True}
+    assert calls == ["q0"]
+
+
 def test_native_batch_answer_shape_preserves_canonical_multi_select_values():
     normalized = [
         {
@@ -92,6 +110,31 @@ def test_native_batch_answer_shape_preserves_canonical_multi_select_values():
 
     assert result["responses"][0]["user_response"] == ["Fast", "Safe"]
     assert result["responses"][0]["choices_offered"] == ["Fast", "Safe"]
+
+
+def test_native_batch_forwards_structured_decision_surface():
+    normalized = [
+        {
+            "qid": "q0", "id": None, "question": "First", "choices": None,
+            "choices_offered": None, "multi_select": False,
+        },
+        {
+            "qid": "q1", "id": None, "question": "Second", "choices": None,
+            "choices_offered": None, "multi_select": False,
+        },
+    ]
+    surface = {"title": "Deployment decisions", "kind": "batch"}
+
+    def native_callback(_question, _choices, *, questions, surface):
+        assert questions is normalized
+        assert surface == {"title": "Deployment decisions", "kind": "batch"}
+        return json.dumps({"answers": {"q0": "A", "q1": "B"}})
+
+    result = json.loads(
+        _run_batch(normalized, native_callback, "Choose", surface=surface)
+    )
+
+    assert [item["user_response"] for item in result["responses"]] == ["A", "B"]
 
 
 def test_discord_review_close_and_empty_selection_guards_are_explicit():

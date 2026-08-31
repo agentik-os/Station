@@ -6164,6 +6164,9 @@ class TurnRunner:
 
             if not ctx._status_adapter:
                 return ""
+            if not ctx.source.user_id:
+                logger.error("Clarify prompt has no initiating source user")
+                return "[clarify source user unavailable]"
 
             # A callback that advertises ``questions`` receives the normalized
             # batch from clarify_tool. Platforms with a native consolidated
@@ -6174,12 +6177,25 @@ class TurnRunner:
             batch_questions = list(questions or ()) if questions is not None else None
             batch_sender = getattr(ctx._status_adapter, "send_clarify_batch", None)
             if batch_questions is not None and not callable(batch_sender):
+                def _fallback_surface(item):
+                    payload = dict(surface or {})
+                    if not payload:
+                        return None
+                    payload["kind"] = ""
+                    payload["decision"] = str(item.get("question") or "")
+                    payload["decision_id"] = (
+                        f"{payload.get('decision_id') or 'decision-batch'}-"
+                        f"{item.get('qid') or 'question'}"
+                    )
+                    return payload
+
                 return _clarify_mod.run_sequential_batch_fallback(
                     batch_questions,
                     lambda item: _clarify_callback_sync(
                         item.get("question", ""),
                         item.get("choices"),
                         bool(item.get("multi_select", False)),
+                        surface=_fallback_surface(item),
                         questions=None,
                     ),
                 )
@@ -6252,7 +6268,7 @@ class TurnRunner:
                 **(ctx._status_thread_metadata or {}),
                 **({"decision_surface": surface_payload} if surface_payload else {}),
                 "source_session": ctx.session_key or "",
-                "decision_user_id": str(ctx.source.user_id or ""),
+                "decision_user_id": str(ctx.source.user_id),
             }
             send_coro = (
                 getattr(ctx._status_adapter, "send_clarify_batch")(

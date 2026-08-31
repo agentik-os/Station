@@ -215,7 +215,10 @@ def decision_request_from_clarify(
     raw_expiry = surface.get("expires_at")
     expires_at = None
     if raw_expiry:
-        expires_at = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+        try:
+            expires_at = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            expires_at = None
     raw_kind = surface.get("kind")
     has_complete_risk_contract = bool(
         sanitize_visible_text(surface.get("context"))
@@ -229,7 +232,11 @@ def decision_request_from_clarify(
         sanitize_visible_text(surface.get("context"))
         and tuple(surface.get("established") or ())
     )
-    kind = SurfaceKind(raw_kind) if raw_kind else (
+    try:
+        explicit_kind = SurfaceKind(raw_kind) if raw_kind else None
+    except (TypeError, ValueError):
+        explicit_kind = None
+    kind = explicit_kind or (
         SurfaceKind.RISK
         if has_complete_risk_contract
         else SurfaceKind.COMPLEX
@@ -550,8 +557,12 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
             cancel_label="Close",
         )
     if kind is not SurfaceKind.SIMPLE:
-        blocks.append("CONTEXT\n" + sanitize_visible_text(request.context))
-        blocks.append("ESTABLISHED\n" + "\n".join(_list_lines(request.established)))
+        context = sanitize_visible_text(request.context)
+        if context:
+            blocks.append("CONTEXT\n" + context)
+        established = _list_lines(request.established)
+        if established:
+            blocks.append("ESTABLISHED\n" + "\n".join(established))
     blocks.append(f"TARGET\n{sanitize_visible_text(request.target)}")
     decision_heading = (
         "CHANGE" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "DECISION"
@@ -632,7 +643,7 @@ def render_decision_content(request: DecisionRequest, limit: int = 2000) -> str:
         return full
     if utf16_len(primary) <= limit:
         marker = "\n\nDETAIL\n[Evidence shortened — use the detail control]"
-        available = limit - utf16_len(primary) - utf16_len(marker)
+        available = limit - utf16_len(primary) - utf16_len(marker) - utf16_len("\n\n")
         if available <= 0:
             return _prefix_utf16(primary, limit)
         return f"{primary}\n\n{_prefix_utf16(detail, available).rstrip()}{marker}"

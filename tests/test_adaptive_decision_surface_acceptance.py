@@ -177,6 +177,8 @@ def test_gateway_binds_decision_surface_to_the_exact_source_session():
     ]
     assert "surface_payload = dict(surface or {})" in callback
     assert 'surface_payload["source_session"] = ctx.session_key or ""' in callback
-    assert '"decision_user_id": str(ctx.source.user_id or "")' in callback
+    assert '"decision_user_id": str(ctx.source.user_id)' in callback
+    assert "if not ctx.source.user_id:" in callback
+    assert "[clarify source user unavailable]" in callback
     assert "surface=surface_payload or None" in callback
     assert '{"decision_surface": surface_payload}' in callback
