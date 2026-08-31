@@ -44,6 +44,7 @@ _PRIVATE_PATH_RE = re.compile(r"/home/[^\s`]+")
 _SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(token|password|secret|api[_-]?key)\s*=\s*([^\s,;]+)"
 )
+_URL_RE = re.compile(r"https?://[^\s<>()]+")
 
 
 def sanitize_visible_text(value: object) -> str:
@@ -135,6 +136,16 @@ def _bounded_section(label: str, value: object, limit: int) -> str:
     return f"{label}\n{_prefix_utf16(text, max(0, limit - utf16_len(marker))).rstrip()}{marker}"
 
 
+def _dedupe_context_urls(context: object, decision: object) -> str:
+    """Keep a URL in the decision once while retaining contextual meaning."""
+    clean_context = sanitize_visible_text(context)
+    clean_decision = sanitize_visible_text(decision)
+    for url in _URL_RE.findall(clean_context):
+        if url in clean_decision:
+            clean_context = clean_context.replace(url, "the link in the decision above")
+    return clean_context
+
+
 def _choice_block(request: DecisionRequest) -> str:
     lines = []
     for choice in request.choices:
@@ -161,7 +172,9 @@ def _visible_blocks(request: DecisionRequest) -> tuple[list[str], list[str]]:
     if kind in {SurfaceKind.SIMPLE, SurfaceKind.OPEN_TEXT}:
         return title_state + [target, decision, default], []
 
-    context = _bounded_section("CONTEXT", request.context, 520)
+    context = _bounded_section(
+        "CONTEXT", _dedupe_context_urls(request.context, request.decision), 520
+    )
     established = _bounded_section(
         "ESTABLISHED", "\n".join(_list_lines(request.established)), 360
     )
@@ -171,7 +184,11 @@ def _visible_blocks(request: DecisionRequest) -> tuple[list[str], list[str]]:
 
     if kind is SurfaceKind.COMPLEX or kind is SurfaceKind.BATCH:
         actionable = title_state + [context, established, target, decision]
-        actionable.extend(block for block in (recommendation_block, choices, default) if block)
+        contextual_risk = sanitize_visible_text(request.risk)
+        risk_block = f"RISK\n{contextual_risk}" if contextual_risk else ""
+        actionable.extend(
+            block for block in (recommendation_block, risk_block, choices, default) if block
+        )
         return actionable, []
 
     risk = f"IMPACT / RISK\n{sanitize_visible_text(request.risk)}"

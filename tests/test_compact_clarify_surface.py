@@ -44,11 +44,11 @@ def test_oauth_clarify_is_one_compact_surface_without_repeated_context():
     assert content.count(request.decision) == 1
     assert "Connect Granola" in content
     assert "Waiting for OAuth consent" in content
-    assert "Risk: Grants access to meeting metadata and transcripts." in content
-    assert "If unanswered: Leave the connection pending." in content
-    for noisy_heading in ("TARGET", "CHOICES", "RECOMMENDATION", "ESTABLISHED", "CONTEXT"):
-        assert noisy_heading not in content
-    assert "Verify and continue" not in content
+    assert "RISK\nGrants access to meeting metadata and transcripts." in content
+    assert "DEFAULT\nLeave the connection pending." in content
+    for required_heading in ("TARGET", "CHOICES", "RECOMMENDATION", "ESTABLISHED", "CONTEXT"):
+        assert required_heading in content
+    assert "Verify and continue" in content
 
 
 def test_adapter_routes_decision_backed_clarify_to_compact_plain_content():
