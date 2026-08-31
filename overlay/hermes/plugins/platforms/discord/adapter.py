@@ -252,6 +252,7 @@ try:
         DecisionRequest,
         SurfaceKind,
         build_decision_embed,
+        render_compact_clarify_content,
         render_decision_content,
         sanitize_visible_text,
         select_surface_kind,
@@ -263,6 +264,7 @@ except ImportError:
         DecisionRequest,
         SurfaceKind,
         build_decision_embed,
+        render_compact_clarify_content,
         render_decision_content,
         sanitize_visible_text,
         select_surface_kind,
@@ -9458,14 +9460,19 @@ class DiscordAdapter(BasePlatformAdapter):
                     decision=str(question or "").strip(),
                     choices=decision_choices,
                     default_action=str(surface.get("default_action") or "No action until answered"),
-                    context=str(surface.get("context") or ""),
-                    established=tuple(surface.get("established") or ()),
+                    kind=SurfaceKind.COMPLEX,
+                    context=str(surface.get("context") or "Decision details are available in this turn."),
+                    established=tuple(surface.get("established") or ("No answer has been applied.",)),
                     recommendation=str(surface.get("recommendation") or ""),
                     risk=str(surface.get("risk") or ""),
                 )
-                return await self.send_decision(
-                    chat_id, request, view=view, metadata=metadata,
+                content = render_compact_clarify_content(
+                    request, limit=self.MAX_MESSAGE_LENGTH
                 )
+                msg = await channel.send(content=content, view=view) if view else await channel.send(content=content)
+                if view:
+                    setattr(view, "_message", msg)
+                return SendResult(success=True, message_id=str(msg.id))
 
             # Clarify owns one self-contained visible surface. Rendering the
             # same prompt in both content and an embed makes Discord clients
