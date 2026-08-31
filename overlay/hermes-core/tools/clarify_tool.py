@@ -146,10 +146,18 @@ def _build_decision_surface(
     *, question: str, title: str = "", state: str = "", context: str = "",
     established=None, target: str = "", consequences=None,
     recommendation: str = "", default_action: str = "", risk: str = "",
+    kind: str = "", includes=None, excludes=None, rollback: str = "",
+    context_detail: str = "",
 ) -> Optional[dict]:
     """Normalize optional rich-decision fields into one adapter payload."""
-    values = (title, state, context, target, recommendation, default_action, risk)
-    if not any(str(value or "").strip() for value in values) and not established and not consequences:
+    values = (
+        title, state, context, target, recommendation, default_action, risk,
+        kind, rollback, context_detail,
+    )
+    if (
+        not any(str(value or "").strip() for value in values)
+        and not established and not consequences and not includes and not excludes
+    ):
         return None
     clean_target = str(target or "").strip() or "Current requested operation"
     digest_source = f"{question.strip()}\n{clean_target}".encode("utf-8")
@@ -164,6 +172,11 @@ def _build_decision_surface(
         "recommendation": str(recommendation or "").strip(),
         "default_action": str(default_action or "").strip() or "No action until answered",
         "risk": str(risk or "").strip(),
+        "kind": str(kind or "").strip(),
+        "includes": _clean_text_list(includes),
+        "excludes": _clean_text_list(excludes),
+        "rollback": str(rollback or "").strip(),
+        "context_detail": str(context_detail or "").strip(),
     }
 
 
@@ -371,6 +384,11 @@ def clarify_tool(
     recommendation: str = "",
     default_action: str = "",
     risk: str = "",
+    kind: str = "",
+    includes: Optional[List[str]] = None,
+    excludes: Optional[List[str]] = None,
+    rollback: str = "",
+    context_detail: str = "",
     callback: Optional[Callable] = None,
 ) -> str:
     """
@@ -453,6 +471,8 @@ def clarify_tool(
             question=question, title=title, state=state, context=context,
             established=established, target=target, consequences=consequences,
             recommendation=recommendation, default_action=default_action, risk=risk,
+            kind=kind, includes=includes, excludes=excludes, rollback=rollback,
+            context_detail=context_detail,
         )
         raw_response = _invoke_callback(
             callback, question, choices, multi_select, surface=surface,
@@ -570,6 +590,27 @@ CLARIFY_SCHEMA = {
             "recommendation": {"type": "string", "description": "The agent's recommendation and brief reason."},
             "default_action": {"type": "string", "description": "What happens if the user does not answer."},
             "risk": {"type": "string", "description": "Material risk, only when genuinely relevant."},
+            "kind": {
+                "type": "string",
+                "enum": ["simple", "complex", "risk", "approval", "open_text", "batch"],
+                "description": "Decision density. Use risk/approval only for material impact.",
+            },
+            "includes": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Exact included scope for risk or approval decisions.",
+            },
+            "excludes": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Exact excluded scope for risk or approval decisions.",
+            },
+            "rollback": {
+                "type": "string",
+                "description": "Recovery path if the approved change fails.",
+            },
+            "context_detail": {
+                "type": "string",
+                "description": "Secondary evidence available through progressive disclosure.",
+            },
             "questions": {
                 "type": "array",
                 "maxItems": MAX_QUESTIONS,
@@ -643,6 +684,11 @@ registry.register(
         recommendation=args.get("recommendation", ""),
         default_action=args.get("default_action", ""),
         risk=args.get("risk", ""),
+        kind=args.get("kind", ""),
+        includes=args.get("includes"),
+        excludes=args.get("excludes"),
+        rollback=args.get("rollback", ""),
+        context_detail=args.get("context_detail", ""),
         callback=kw.get("callback")),
     check_fn=check_clarify_requirements,
     emoji="❓",
