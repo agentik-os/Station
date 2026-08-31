@@ -85,6 +85,8 @@ class DecisionRequest:
     excludes: Sequence[str] = ()
     rollback: str = ""
     context_detail: str = ""
+    source_session: str = ""
+    expires_at: str = ""
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -125,50 +127,67 @@ def _list_lines(values: Iterable[object]) -> list[str]:
     return [f"- {sanitize_visible_text(value)}" for value in values if sanitize_visible_text(value)]
 
 
-def _essential_blocks(request: DecisionRequest) -> list[str]:
-    blocks = [
-        sanitize_visible_text(request.title),
+def _bounded_section(label: str, value: object, limit: int) -> str:
+    text = sanitize_visible_text(value)
+    if utf16_len(text) <= limit:
+        return f"{label}\n{text}"
+    marker = "… [Context shortened — use Context for full evidence]"
+    return f"{label}\n{_prefix_utf16(text, max(0, limit - utf16_len(marker))).rstrip()}{marker}"
+
+
+def _choice_block(request: DecisionRequest) -> str:
+    lines = []
+    for choice in request.choices:
+        recommendation = " · RECOMMENDED" if choice.recommended else ""
+        lines.append(
+            f"- {sanitize_visible_text(choice.label)} — "
+            f"{sanitize_visible_text(choice.consequence)}{recommendation}"
+        )
+    return "CHOICES\n" + "\n".join(lines) if lines else ""
+
+
+def _visible_blocks(request: DecisionRequest) -> tuple[list[str], list[str]]:
+    """Return (actionable, secondary) blocks in the approved visual order."""
+    kind = select_surface_kind(request)
+    title_state = [
+        f"**{sanitize_visible_text(request.title)}**",
         sanitize_visible_text(request.state),
-        f"TARGET\n{sanitize_visible_text(request.target)}",
-        f"DECISION\n{sanitize_visible_text(request.decision)}",
     ]
-    if request.choices:
-        choice_lines = []
-        for choice in request.choices:
-            recommendation = " · RECOMMENDED" if choice.recommended else ""
-            choice_lines.append(
-                f"- {sanitize_visible_text(choice.label)} — "
-                f"{sanitize_visible_text(choice.consequence)}{recommendation}"
-            )
-        blocks.append("CHOICES\n" + "\n".join(choice_lines))
-    if sanitize_visible_text(request.recommendation):
-        blocks.append("RECOMMENDATION\n" + sanitize_visible_text(request.recommendation))
-    if sanitize_visible_text(request.risk):
-        blocks.append("RISK\n" + sanitize_visible_text(request.risk))
-    if request.includes:
-        blocks.append("INCLUDES\n" + "\n".join(_list_lines(request.includes)))
-    if request.excludes:
-        blocks.append("EXCLUDES\n" + "\n".join(_list_lines(request.excludes)))
-    if sanitize_visible_text(request.rollback):
-        blocks.append("ROLLBACK\n" + sanitize_visible_text(request.rollback))
-    blocks.append("DEFAULT\n" + sanitize_visible_text(request.default_action))
-    return blocks
+    target = f"TARGET\n{sanitize_visible_text(request.target)}"
+    decision_label = "CHANGE" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "DECISION"
+    decision = f"{decision_label}\n{sanitize_visible_text(request.decision)}"
+    default = f"DEFAULT\n{sanitize_visible_text(request.default_action)}"
+
+    if kind in {SurfaceKind.SIMPLE, SurfaceKind.OPEN_TEXT}:
+        return title_state + [target, decision, default], []
+
+    context = _bounded_section("CONTEXT", request.context, 520)
+    established = _bounded_section(
+        "ESTABLISHED", "\n".join(_list_lines(request.established)), 360
+    )
+    recommendation = sanitize_visible_text(request.recommendation)
+    recommendation_block = f"RECOMMENDATION\n{recommendation}" if recommendation else ""
+    choices = _choice_block(request)
+
+    if kind is SurfaceKind.COMPLEX or kind is SurfaceKind.BATCH:
+        actionable = title_state + [context, established, target, decision]
+        actionable.extend(block for block in (recommendation_block, choices, default) if block)
+        return actionable, []
+
+    risk = f"IMPACT / RISK\n{sanitize_visible_text(request.risk)}"
+    includes = "INCLUDES\n" + "\n".join(_list_lines(request.includes))
+    excludes = "EXCLUDES\n" + "\n".join(_list_lines(request.excludes))
+    rollback = f"ROLLBACK\n{sanitize_visible_text(request.rollback)}"
+    actionable = title_state + [context, established, target, decision, risk, includes, excludes, rollback]
+    actionable.extend(block for block in (recommendation_block, choices, default) if block)
+    return actionable, []
 
 
 def render_compact_clarify_content(
     request: DecisionRequest, limit: int = 2000
 ) -> str:
-    """Render one concise question surface; controls carry choice detail."""
-    blocks = [
-        f"**{sanitize_visible_text(request.title)}**",
-        sanitize_visible_text(request.state),
-        sanitize_visible_text(request.decision),
-    ]
-    risk = sanitize_visible_text(request.risk)
-    if risk:
-        blocks.append(f"Risk: {risk}")
-    blocks.append(f"If unanswered: {sanitize_visible_text(request.default_action)}")
-    return _prefix_utf16("\n\n".join(block for block in blocks if block), limit)
+    """Compatibility alias for the complete adaptive decision renderer."""
+    return render_decision_content(request, limit=limit)
 
 
 @dataclass(frozen=True)
@@ -192,30 +211,23 @@ def build_decision_embed(request: DecisionRequest, limit: int = 4096) -> Rendere
 
 
 def render_decision_content(request: DecisionRequest, limit: int = 2000) -> str:
-    """Render a decision while preserving actionable information before context."""
+    """Render the approved adaptive surface, preserving action before evidence."""
     if limit < 1:
         return ""
-    essential = "\n\n".join(_essential_blocks(request))
-    context_parts = []
-    if sanitize_visible_text(request.context):
-        context_parts.append("CONTEXT\n" + sanitize_visible_text(request.context))
-    established = _list_lines(request.established)
-    if established:
-        context_parts.append("ESTABLISHED\n" + "\n".join(established))
-    if sanitize_visible_text(request.context_detail):
-        context_parts.append("DETAIL\n" + sanitize_visible_text(request.context_detail))
-
-    if not context_parts:
+    actionable_blocks, secondary_blocks = _visible_blocks(request)
+    essential = "\n\n".join(block for block in actionable_blocks if block)
+    detail = sanitize_visible_text(request.context_detail)
+    if detail and select_surface_kind(request) not in {SurfaceKind.SIMPLE, SurfaceKind.OPEN_TEXT}:
+        secondary_blocks.append(_bounded_section("TECHNICAL CONTEXT", detail, 700))
+    if not secondary_blocks:
         return _prefix_utf16(essential, limit)
-
-    context = "\n\n".join(context_parts)
-    full = f"{essential}\n\n{context}"
+    secondary = "\n\n".join(secondary_blocks)
+    full = f"{essential}\n\n{secondary}"
     if utf16_len(full) <= limit:
         return full
-
-    marker = "\n\nCONTEXT\n[Context shortened — use Context for full evidence]"
+    marker = "\n\nTECHNICAL CONTEXT\n[Context shortened — use Context for full evidence]"
     available = limit - utf16_len(essential) - utf16_len(marker) - utf16_len("\n\n")
     if available <= 0:
         return _prefix_utf16(essential, limit)
-    shortened = _prefix_utf16(context, available).rstrip()
+    shortened = _prefix_utf16(secondary, available).rstrip()
     return f"{essential}\n\n{shortened}{marker}"
