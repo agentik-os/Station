@@ -403,10 +403,18 @@ def test_collective_interagent_routes_and_authenticates_as_agentik():
     assert broker.source_for_peer(12, 1002, mapping, collective_env) == "mission"
 
 
-def test_collective_has_agentik_community_semantics_and_no_client_paths(tmp_path):
+def test_collective_has_agentik_community_semantics_and_no_client_paths(tmp_path, monkeypatch):
     plugin_root = ROOT / "overlay" / "hermes" / "plugins"
-    sys.path.insert(0, "/opt/agk-terminal/hermes-agent")
     sys.path.insert(0, str(plugin_root))
+    import types
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_config = types.ModuleType("hermes_cli.config")
+    agentik_package = types.ModuleType("agentik_os")
+    setattr(agentik_package, "__path__", [str(plugin_root / "agentik_os")])
+    setattr(hermes_config, "read_raw_config", lambda: {})
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", hermes_config)
+    monkeypatch.setitem(sys.modules, "agentik_os", agentik_package)
     from agentik_os.commands import AgentikCommandService
     from agentik_os.domain import DOMAIN_COMMANDS
     from agentik_os.paths import PathResolver
