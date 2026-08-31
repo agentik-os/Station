@@ -153,6 +153,7 @@ done
 # same UX contract on its first sync.
 discord_source=$install_root/hermes/plugins/platforms/discord
 discord_target=$hermes_home/plugins/platforms/discord
+mkdir -p "$(dirname "$discord_target")"
 rm -rf "$discord_target.new"
 if [ -d "$discord_target" ]; then
   cp -a "$discord_target" "$discord_target.new"
