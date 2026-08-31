@@ -1520,7 +1520,7 @@ class DiscordAdapter(BasePlatformAdapter):
             intents.message_content = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT", True)
             intents.dm_messages = True
             intents.guild_messages = True
-            intents.members = _needs_server_members_intent(
+            intents.members = _env_bool("DISCORD_MEMBERS_INTENT", False) or _needs_server_members_intent(
                 self._allowed_user_ids,
                 self._allowed_role_ids,
             )
@@ -7754,6 +7754,9 @@ class DiscordAdapter(BasePlatformAdapter):
         if ui_only:
             hermes_home = self._hermes_home
             allowed_ui_commands = station_ui_command_names(hermes_home)
+            # Collective is a fleet-wide Station control surface and must not
+            # disappear when a profile uses the reduced dynamic command UI.
+            allowed_ui_commands.add("collective")
             for registered in list(tree.get_commands()):
                 if getattr(registered, "name", "") not in allowed_ui_commands:
                     tree.remove_command(registered.name)
@@ -9103,9 +9106,14 @@ class DiscordAdapter(BasePlatformAdapter):
             prefix = f"{header}\n\n"
             suffix = tail
         truncated_suffix = "\n... [truncated]"
-        budget = max(0, self.MAX_MESSAGE_LENGTH - len(prefix) - len(suffix))
-        if len(body) > budget:
-            body = body[: max(0, budget - len(truncated_suffix))] + truncated_suffix
+        budget = max(
+            0,
+            self.MAX_MESSAGE_LENGTH - utf16_len(prefix) - utf16_len(suffix),
+        )
+        if utf16_len(body) > budget:
+            marker = _prefix_within_utf16_limit(truncated_suffix, budget)
+            body_budget = max(0, budget - utf16_len(marker))
+            body = _prefix_within_utf16_limit(body, body_budget) + marker
         return f"{prefix}{body}{suffix}"
 
     async def send_decision(
