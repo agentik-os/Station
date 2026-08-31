@@ -191,7 +191,7 @@ fi
 install -d -m 0755 "$install_root/bin" "$install_root/scripts" "$install_root/config" "$install_root/rmux" \
   "$install_root/client" "$install_root/os-packages" \
   "$install_root/hermes/plugins/platforms" "$install_root/hermes/dashboard-themes" \
-  "$install_root/hermes-core/gateway" \
+  "$install_root/hermes-core/gateway" "$install_root/hermes-core/tools" \
   "$install_root/agents" "$bin_dir"
 install -m 0755 "$agk_tui_binary" "$install_root/bin/agk-tui"
 install -m 0755 "$repo_root/scripts/agk_control.py" "$install_root/scripts/agk_control.py"
@@ -263,6 +263,10 @@ done
 for progress_file in agent/agent_init.py agent/tool_executor.py run_agent.py; do
   install -D -m 0644 "$repo_root/hermes-core/$progress_file" \
     "$install_root/hermes-core/$progress_file"
+done
+for clarify_file in clarify_tool.py clarify_gateway.py; do
+  install -m 0644 "$repo_root/hermes-core/tools/$clarify_file" \
+    "$install_root/hermes-core/tools/$clarify_file"
 done
 rm -rf "$install_root/hermes/plugins/agentik_os" \
   "$install_root/hermes/plugins/agk_power_stack" \

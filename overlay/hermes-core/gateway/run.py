@@ -6155,7 +6155,9 @@ class TurnRunner:
         # explaining that no response arrived (so the agent can adapt
         # rather than hang forever).
         # ------------------------------------------------------------------
-        def _clarify_callback_sync(question: str, choices, multi_select: bool = False) -> str:
+        def _clarify_callback_sync(
+            question: str, choices, multi_select: bool = False, surface=None,
+        ) -> str:
             from tools import clarify_gateway as _clarify_mod
             import uuid as _uuid
 
@@ -6169,6 +6171,7 @@ class TurnRunner:
                 question=question,
                 choices=list(choices) if choices else None,
                 multi_select=bool(multi_select),
+                surface=surface,
             )
 
             # For WeCom native streaming: finalize the current stream before
@@ -6221,7 +6224,10 @@ class TurnRunner:
                     choices=list(choices) if choices else None,
                     clarify_id=clarify_id,
                     session_key=ctx.session_key or "",
-                    metadata=ctx._status_thread_metadata,
+                    metadata={
+                        **(ctx._status_thread_metadata or {}),
+                        **({"decision_surface": surface} if surface else {}),
+                    },
                 ),
                 ctx._loop_for_step,
                 logger=logger,

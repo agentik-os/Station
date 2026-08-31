@@ -109,6 +109,10 @@ for progress_file in agent/agent_init.py agent/tool_executor.py run_agent.py; do
   install -m 0644 "$install_root/hermes-core/$progress_file" \
     "$official_dir/$progress_file"
 done
+for clarify_file in clarify_tool.py clarify_gateway.py; do
+  install -m 0644 "$install_root/hermes-core/tools/$clarify_file" \
+    "$official_dir/tools/$clarify_file"
+done
 
 # The non-interactive official bootstrap deliberately skips messaging setup.
 # Install the exact Discord versions pinned by Hermes so existing gateway units
