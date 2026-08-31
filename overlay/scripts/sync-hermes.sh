@@ -102,7 +102,7 @@ if [ "$discord_admin_json" != "[]" ]; then
   hermes config set platforms.discord.extra.allow_admin_from "$discord_admin_json" >/dev/null
   hermes config set platforms.discord.extra.group_allow_admin_from "$discord_admin_json" >/dev/null
 fi
-for plugin_path in agentik_os agk_discord_ui_policy platforms/discord; do
+for plugin_path in agentik_os agk_discord_ui_policy; do
   plugin_target=$hermes_home/plugins/$plugin_path
   mkdir -p "$(dirname "$plugin_target")"
   rm -rf "$plugin_target.new"
@@ -110,6 +110,30 @@ for plugin_path in agentik_os agk_discord_ui_policy platforms/discord; do
   rm -rf "$plugin_target"
   mv "$plugin_target.new" "$plugin_target"
 done
+
+# Discord has one fleet-wide response/interaction core plus profile-owned AGK
+# extension modules. Seed from the existing profile so client/private extension
+# code is never erased, then overlay the reviewed common files atomically. A new
+# profile starts from the complete canonical package and therefore receives the
+# same UX contract on its first sync.
+discord_source=$install_root/hermes/plugins/platforms/discord
+discord_target=$hermes_home/plugins/platforms/discord
+rm -rf "$discord_target.new"
+if [ -d "$discord_target" ]; then
+  cp -a "$discord_target" "$discord_target.new"
+else
+  cp -a "$discord_source" "$discord_target.new"
+fi
+for common_file in \
+  __init__.py adapter.py command_center.py interaction_surfaces.py \
+  notification_policy.py status_surfaces.py recovery.py ffmpeg_utils.py \
+  voice_mixer.py; do
+  if [ -f "$discord_source/$common_file" ]; then
+    install -m 0644 "$discord_source/$common_file" "$discord_target.new/$common_file"
+  fi
+done
+rm -rf "$discord_target"
+mv "$discord_target.new" "$discord_target"
 
 if [ -d "$install_root/hermes/skills" ]; then
   for skill_source in "$install_root"/hermes/skills/*; do
