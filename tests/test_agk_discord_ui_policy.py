@@ -83,9 +83,11 @@ def test_owner_policy_applies_same_plan_message_without_telegram_notification_st
     assert "before operational execution begins" in normalized
 
 
-def test_shared_hermes_refresh_syncs_every_named_profile_not_only_base_homes():
+def test_shared_hermes_refresh_syncs_every_named_profile_not_only_configured_profiles():
     installer = (ROOT / "overlay/scripts/install-shared-hermes.sh").read_text()
-    assert "for profile_config in /home/*/.hermes/profiles/*/config.yaml" in installer
+    assert 'for user_name in "${users[@]}"' in installer
+    assert 'profiles_root="$home_dir/.hermes/profiles"' in installer
+    assert "find \"$profiles_root\" -mindepth 1 -maxdepth 1 -type d -print0" in installer
     assert 'HERMES_HOME="$profile_home"' in installer
     assert '"$install_root/scripts/sync-hermes.sh"' in installer
 
