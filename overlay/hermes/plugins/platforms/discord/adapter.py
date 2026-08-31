@@ -172,7 +172,12 @@ sys.path.insert(0, str(_Path(__file__).resolve().parents[3]))
 try:
     from .ffmpeg_utils import resolve_ffmpeg_executable
     from .agk_client_reviews import register_agk_client_review_listener
+    from .agk_collective_membership import (
+        register_collective_commands,
+        register_collective_membership_listener,
+    )
     from .agk_session_control_ui import register_station_session_commands
+    from .agk_recovery_ui import register_recovery_commands
     from .agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
     from .agk_account_control_ui import (
         ACCOUNT_CONTROL_GUILD_ID,
@@ -188,7 +193,12 @@ try:
 except ImportError:
     from ffmpeg_utils import resolve_ffmpeg_executable
     from agk_client_reviews import register_agk_client_review_listener
+    from agk_collective_membership import (
+        register_collective_commands,
+        register_collective_membership_listener,
+    )
     from agk_session_control_ui import register_station_session_commands
+    from agk_recovery_ui import register_recovery_commands
     from agk_account_usage_monitor import DiscordAccountUsageMonitor, MonitorConfig
     from agk_account_control_ui import (
         ACCOUNT_CONTROL_GUILD_ID,
@@ -1598,6 +1608,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 await adapter_self._dispatch_discord_message(message)
 
             register_agk_client_review_listener(self._client, adapter_self)
+            register_collective_membership_listener(self._client, adapter_self)
 
             @self._client.event
             async def on_message_edit(before: DiscordMessage, after: DiscordMessage):
@@ -7275,8 +7286,10 @@ class DiscordAdapter(BasePlatformAdapter):
             )
         try:
             register_station_session_commands(self, tree)
+            register_recovery_commands(self, tree)
+            register_collective_commands(self, tree)
         except Exception as exc:
-            logger.warning("Station Session Control Center registration failed: %s", exc)
+            logger.warning("Station control center registration failed: %s", exc)
         # Dynamic Views are the durable public surface. Future profile bots
         # inherit this policy when sync-hermes installs the adapter.
         ui_only = str(
@@ -9340,7 +9353,7 @@ class DiscordAdapter(BasePlatformAdapter):
         via ``resolve_gateway_clarify(clarify_id, choice_text)``.
 
         Open-ended mode (``choices`` empty/None): renders the question as
-        plain embed text — no buttons. The gateway's text-intercept captures
+        plain content — no buttons. The gateway's text-intercept captures
         the next message in this session and resolves the clarify.
 
         Choice normalisation: ``choices`` may contain bare strings OR dicts
@@ -9362,17 +9375,6 @@ class DiscordAdapter(BasePlatformAdapter):
             if not channel:
                 channel = await self._client.fetch_channel(int(target_id))
 
-            # Discord embed description limit is 4096; trim conservatively.
-            max_desc = 4088
-            body = str(question or "").strip()
-            if len(body) > max_desc:
-                body = body[: max_desc - 3] + "..."
-
-            embed = discord.Embed(
-                title="❓ Hermes needs your input",
-                description=body,
-                color=discord.Color.orange(),
-            )
 
             # Normalise choices: LLMs sometimes emit `[{"description": "..."}]`
             # instead of bare strings, which would render as raw Python repr on
@@ -9411,11 +9413,6 @@ class DiscordAdapter(BasePlatformAdapter):
             clean_choices = clean_choices[:24]
 
             if clean_choices:
-                embed.add_field(
-                    name="Choices",
-                    value="Pick one below, or click ✏️ Other to type a custom answer.",
-                    inline=False,
-                )
                 view = ClarifyChoiceView(
                     choices=clean_choices,
                     clarify_id=clarify_id,
@@ -9423,11 +9420,6 @@ class DiscordAdapter(BasePlatformAdapter):
                     allowed_role_ids=self._allowed_role_ids,
                 )
             else:
-                embed.add_field(
-                    name="Reply",
-                    value="Reply in this channel with your answer.",
-                    inline=False,
-                )
                 view = None
 
             surface = metadata.get("decision_surface") if metadata else None
@@ -9479,7 +9471,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 "❓ **Hermes needs your input**", str(question or "").strip(),
                 tail=clarify_tail,
             )
-            msg = await channel.send(content=content, embed=embed, view=view) if view else await channel.send(content=content, embed=embed)
+            msg = await channel.send(content=content, view=view) if view else await channel.send(content=content)
             if view:
                 view._message = msg  # store for on_timeout expiration editing
             return SendResult(success=True, message_id=str(msg.id))
