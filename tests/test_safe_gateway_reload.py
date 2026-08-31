@@ -21,6 +21,13 @@ def test_missing_active_agent_count_fails_closed(tmp_path):
  m=load(); (tmp_path/"gateway_state.json").write_text('{"gateway_state":"running"}')
  with pytest.raises(m.StatusUnavailable): m.status(tmp_path)
 
+def test_safe_reload_treats_nutrition_like_every_other_gateway():
+ source=MODULE.read_text()
+ assert "nutrition-never-stop" not in source
+ assert "if 'nutrition' in args.unit" not in source
+ assert 'if "nutrition" in args.unit' not in source
+
+
 def test_signal_cancellation_is_inside_marker_cleanup_scope():
  source=MODULE.read_text()
  assert "signal.signal(signal.SIGTERM,cancel_signal)" in source
