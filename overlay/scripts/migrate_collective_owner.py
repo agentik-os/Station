@@ -15,8 +15,10 @@ import urllib.request
 from pathlib import Path
 
 APP_ID = "1541131574509314209"
-GUILD_ID = "1350170767366688830"
-CHANNEL_ID = "1541847685680603387"
+CONTROL_GUILD_ID = "1541131439599386644"
+HOME_CHANNEL_ID = "1541847685680603387"
+COMMUNITY_GUILD_ID = "1350170767366688830"
+FORUM_CHANNEL_ID = "1541222874226888804"
 OLD_USER = "mission"
 NEW_USER = "agentik"
 OLD_ROOT = Path("/home/mission/.hermes")
@@ -268,10 +270,21 @@ def discord_probe(token: str) -> dict[str, str]:
             with urllib.request.urlopen(urllib.request.Request("https://discord.com/api/v10"+path,headers=headers),timeout=30) as response: return json.load(response)
         except (urllib.error.HTTPError,urllib.error.URLError,ValueError,TimeoutError) as error:
             raise RuntimeError("Discord transfer identity probe failed") from error
-    identity=get("/users/@me"); channel=get("/channels/"+CHANNEL_ID)
-    if str(identity.get("id")) != APP_ID or not identity.get("bot") or str(channel.get("guild_id")) != GUILD_ID:
-        raise RuntimeError("Collective Discord identity/guild/channel mismatch")
-    return {"id":APP_ID,"guild_id":GUILD_ID,"channel_id":CHANNEL_ID}
+    identity=get("/users/@me")
+    home=get("/channels/"+HOME_CHANNEL_ID)
+    forum=get("/channels/"+FORUM_CHANNEL_ID)
+    if (str(identity.get("id")) != APP_ID or not identity.get("bot") or
+        str(home.get("id")) != HOME_CHANNEL_ID or str(home.get("guild_id")) != CONTROL_GUILD_ID or
+        str(forum.get("id")) != FORUM_CHANNEL_ID or str(forum.get("guild_id")) != COMMUNITY_GUILD_ID or
+        forum.get("type") != 15):
+        raise RuntimeError("Collective Discord identity/control/community route mismatch")
+    return {
+        "id": APP_ID,
+        "control_guild_id": CONTROL_GUILD_ID,
+        "home_channel_id": HOME_CHANNEL_ID,
+        "community_guild_id": COMMUNITY_GUILD_ID,
+        "forum_channel_id": FORUM_CHANNEL_ID,
+    }
 
 
 def active_agents() -> int:

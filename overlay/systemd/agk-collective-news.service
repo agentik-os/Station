@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+WorkingDirectory=/home/agentik
 Environment=HOME=/home/agentik
 Environment=HERMES_HOME=/home/agentik/.hermes/profiles/collective
 Environment=PATH=/opt/agk-terminal/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin

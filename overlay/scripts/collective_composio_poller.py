@@ -131,6 +131,11 @@ def composio_account(slug: str) -> str:
     return value
 
 
+def private_composio_child_setup() -> None:
+    """Force Composio-created response artifacts to be owner-only."""
+    os.umask(0o077)
+
+
 def composio_execute(slug: str, data: dict[str, Any], timeout: int = 60) -> Any:
     result = subprocess.run(
         [COMPOSIO, "execute", slug, "--account", composio_account(slug), "-d", json.dumps(data, separators=(",", ":"))],
@@ -139,6 +144,7 @@ def composio_execute(slug: str, data: dict[str, Any], timeout: int = 60) -> Any:
         check=False,
         timeout=timeout,
         env={**os.environ, "HOME": "/home/agentik"},
+        preexec_fn=private_composio_child_setup,
     )
     if result.returncode:
         raise RuntimeError(f"Composio {slug} failed with exit code {result.returncode}")

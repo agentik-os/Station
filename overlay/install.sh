@@ -266,9 +266,15 @@ for unit in \
 do
   install -m 0644 "$repo_root/systemd/$unit" "$install_root/systemd/$unit"
 done
+if [ "$system_install" = true ]; then
+  install -d -m 0755 /etc/tmpfiles.d
+  install -m 0644 "$repo_root/tmpfiles.d/agk-composio.conf" /etc/tmpfiles.d/agk-composio.conf
+  systemd-tmpfiles --create /etc/tmpfiles.d/agk-composio.conf
+fi
 install -m 0644 "$repo_root/config/topology.yaml" "$install_root/config/topology.yaml"
 install -m 0644 "$repo_root/config/providers.yaml" "$install_root/config/providers.yaml"
 install -m 0644 "$repo_root/config/rules.yaml" "$install_root/config/rules.yaml"
+install -m 0644 "$repo_root/config/discord-channel-state.json" "$install_root/config/discord-channel-state.json"
 install -m 0644 "$repo_root/config/power-stack.yaml" \
   "$install_root/config/power-stack.yaml"
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"

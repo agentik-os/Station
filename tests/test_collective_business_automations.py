@@ -274,6 +274,25 @@ def test_news_weekday_and_daily_dedupe(tmp_path):
     assert 'text.find("AGK News —")' in NEWS.read_text()
 
 
+def test_composio_execution_forces_private_artifact_permissions(monkeypatch):
+    poller = load(POLLER, "collective_poller_private_artifacts")
+    monkeypatch.setenv("AGK_COMPOSIO_STRIPE_ACCOUNT_ID", "ca_agentik123")
+    observed = {}
+
+    class Result:
+        returncode = 0
+        stdout = '{"data": []}'
+
+    def fake_run(*args, **kwargs):
+        observed.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr(poller.subprocess, "run", fake_run)
+    assert poller.composio_execute("STRIPE_LIST_CHECKOUT_SESSIONS", {}) == []
+    assert observed["preexec_fn"] is poller.private_composio_child_setup
+    assert "UMask=0077" in (ROOT / "overlay" / "systemd" / "agk-collective-composio.service").read_text()
+
+
 def test_packaging_installs_collective_runtime_and_exact_timers():
     combined = (ROOT / "overlay" / "install.sh").read_text() + (ROOT / "overlay" / "scripts" / "install-shared-hermes.sh").read_text()
     for name in (
@@ -289,6 +308,16 @@ def test_packaging_installs_collective_runtime_and_exact_timers():
     assert "OnUnitActiveSec=1min" in composio_timer
     news_timer = (ROOT / "overlay" / "systemd" / "agk-collective-news.timer").read_text()
     assert "OnCalendar=Mon..Fri" in news_timer
+    news_service = (ROOT / "overlay" / "systemd" / "agk-collective-news.service").read_text()
+    assert "WorkingDirectory=/home/agentik" in news_service
+    tmpfiles = (ROOT / "overlay" / "tmpfiles.d" / "agk-composio.conf").read_text()
+    assert "d /tmp/composio 1777 root root -" in tmpfiles
+    installer = (ROOT / "overlay" / "install.sh").read_text()
+    tmpfiles_install = 'install -m 0644 "$repo_root/tmpfiles.d/agk-composio.conf" /etc/tmpfiles.d/agk-composio.conf'
+    assert tmpfiles_install in installer
+    assert installer.rfind('if [ "$system_install" = true ]; then', 0, installer.index(tmpfiles_install)) != -1
+    assert 'install -m 0644 "$repo_root/config/discord-channel-state.json" "$install_root/config/discord-channel-state.json"' in installer
+    assert "systemd-tmpfiles --create" in installer
 
 
 def test_adapter_registers_collective_listener_and_panel():
@@ -348,11 +377,16 @@ def test_collective_is_owned_by_agentik_never_mission():
         ROOT / "overlay" / "systemd" / "agk-github-stars-forum.service",
         ROOT / "overlay" / "systemd" / "agk-collective-composio.service",
         ROOT / "overlay" / "systemd" / "agk-collective-news.service",
+        ROOT / "overlay" / "config" / "discord-channel-state.json",
     ]
     combined = "\n".join(path.read_text() for path in files)
     assert "/home/agentik/.hermes/profiles/collective" in combined
     assert "/home/mission/.hermes/profiles/collective" not in combined
     assert 'collective) user=agentik' in (ROOT / "bin" / "station").read_text()
+    manifest = __import__("json").loads((ROOT / "overlay" / "config" / "discord-channel-state.json").read_text())
+    collective = next(target for target in manifest["targets"] if target["key"] == "collective")
+    assert collective["user"] == "agentik"
+    assert collective["hermes_home"] == "/home/agentik/.hermes/profiles/collective"
 
 
 def test_collective_interagent_routes_and_authenticates_as_agentik():
@@ -398,6 +432,11 @@ def test_collective_has_agentik_community_semantics_and_no_client_paths(tmp_path
 
 def test_collective_cutover_moves_only_token_and_has_native_rollback():
     migrate = load(MIGRATE, "collective_owner_cutover")
+    assert migrate.APP_ID == "1541131574509314209"
+    assert migrate.CONTROL_GUILD_ID == "1541131439599386644"
+    assert migrate.HOME_CHANNEL_ID == "1541847685680603387"
+    assert migrate.COMMUNITY_GUILD_ID == "1350170767366688830"
+    assert migrate.FORUM_CHANNEL_ID == "1541222874226888804"
     token = "A" * 40
     source = "KEEP=value\nDISCORD_BOT_TOKEN=" + token + "\nOTHER=value\n"
     extracted, without = migrate.extract_token(source)
