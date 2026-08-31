@@ -14,7 +14,7 @@ Station interfaces for Gareth are monochrome, brutally minimal, editorial, spaci
 
 Do not default to glossy cards, glassmorphism, AI/crypto gradients, violet tech glow, generic SaaS dashboards, centered hero-and-card compositions, fake metrics, decorative icon grids, excessive pills, shadows, or rounded rectangles used as hierarchy.
 
-## Discord interaction contract
+## Messaging interaction contract
 
 - One compact interaction per decision or operation.
 - Short title, one clear status/decision, concise operational copy.
@@ -27,8 +27,15 @@ Do not default to glossy cards, glassmorphism, AI/crypto gradients, violet tech 
 - Re-check authorization on every component and modal callback.
 - Sensitive actions use ephemeral staged confirmation.
 - Typed commands are a compatibility fallback, not the primary UX.
+- Show every canonical plan action in the live Action Message, preserving plan order and marking each item as completed, in progress, pending, or cancelled.
+- Before operational execution begins, the first Action Message must expose every currently known action, including future verification, deployment, evidence, approval, and rollback steps; revise the same visible checklist when scope changes.
+- On Discord and Telegram, plan progress must edit the same message; never emit one new message per checklist update or tool call.
+- Telegram uses important-only notifications and suppresses tool, interim, heartbeat, and streaming chatter. A notification storm is a release blocker.
+- Keep the objective, progress bar, current action, and full checklist inside the platform's single-message limit through deterministic compact rendering.
+- Action Messages use the **Editorial minimal** state language: `✓` completed, `→` in progress, `·` pending, `◇` verifying, `‖` waiting or blocked, `!` owner decision required, `×` failed, and `—` cancelled.
+- Use uppercase `NOW` and `PLAN` section labels. Keep counts and progress on separate editorial lines; do not add colored status-circle emoji or decorative icons.
 
-Discord native colors and component chrome cannot be fully themed. Consistency comes from information architecture, naming, brevity, ordering, progressive disclosure, and predictable controls—not decorative emoji or embed color.
+Discord and Telegram native chrome cannot be fully themed. Consistency comes from information architecture, naming, brevity, ordering, progressive disclosure, and predictable controls—not decorative emoji or embed color.
 
 ## Web interaction contract
 
