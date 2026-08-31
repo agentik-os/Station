@@ -233,6 +233,11 @@ def _normalize_questions(questions) -> tuple:
         return None, "questions must be an array of question objects."
     if not questions:
         return None, None
+    if len(questions) < 2:
+        return None, (
+            "questions requires two to five items; use the top-level question fields "
+            "for one question"
+        )
     if len(questions) > MAX_QUESTIONS:
         return None, f"questions supports at most {MAX_QUESTIONS} items."
 
@@ -613,6 +618,7 @@ CLARIFY_SCHEMA = {
             },
             "questions": {
                 "type": "array",
+                "minItems": 2,
                 "maxItems": MAX_QUESTIONS,
                 "description": (
                     "Ask 2-5 INDEPENDENT questions in one call instead of "

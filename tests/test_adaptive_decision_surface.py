@@ -360,3 +360,28 @@ def test_legacy_clarify_safely_forms_approved_simple_or_open_text_request():
         surface=None,
     )
     assert open_request.kind is m.SurfaceKind.OPEN_TEXT
+
+
+@pytest.mark.parametrize(
+    "surface",
+    (
+        {"title": "Release choice"},
+        {"context": "The release is staged but not active."},
+        {"recommendation": "Prefer Stable."},
+    ),
+)
+def test_partial_structured_clarify_remains_a_valid_safe_simple_surface(surface):
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose the Operator release channel",
+        choices=("Stable (Recommended)", "Hold"),
+        clarify_id="clarify-partial",
+        source_session="discord:operator:session-partial",
+        surface=surface,
+    )
+
+    assert request.kind is m.SurfaceKind.SIMPLE
+    assert request.state == "Work is paused for this answer."
+    assert request.target == "Current request in this session"
+    assert request.default_action == "No action; work remains paused until answered."
+    assert all(choice.consequence for choice in request.choices)

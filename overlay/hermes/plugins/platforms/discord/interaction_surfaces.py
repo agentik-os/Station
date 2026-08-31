@@ -199,7 +199,11 @@ def decision_request_from_clarify(
             recommended = label.casefold().endswith("(recommended)")
             if recommended:
                 label = label[: -len("(recommended)")].rstrip()
-            consequence = str(consequences[index]) if index < len(consequences) else ""
+            consequence = (
+                str(consequences[index])
+                if index < len(consequences) and sanitize_visible_text(consequences[index])
+                else f"Choose {label}."
+            )
             parsed_choices.append(
                 DecisionChoice(
                     id=f"choice-{index + 1}",
@@ -213,21 +217,33 @@ def decision_request_from_clarify(
     if raw_expiry:
         expires_at = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
     raw_kind = surface.get("kind")
+    has_complete_risk_contract = bool(
+        sanitize_visible_text(surface.get("context"))
+        and tuple(surface.get("established") or ())
+        and sanitize_visible_text(surface.get("risk"))
+        and tuple(surface.get("includes") or ())
+        and tuple(surface.get("excludes") or ())
+        and sanitize_visible_text(surface.get("rollback"))
+    )
+    has_complete_complex_contract = bool(
+        sanitize_visible_text(surface.get("context"))
+        and tuple(surface.get("established") or ())
+    )
     kind = SurfaceKind(raw_kind) if raw_kind else (
         SurfaceKind.RISK
-        if any(surface.get(name) for name in ("risk", "includes", "excludes", "rollback"))
+        if has_complete_risk_contract
         else SurfaceKind.COMPLEX
-        if any(surface.get(name) for name in ("context", "established", "recommendation"))
+        if has_complete_complex_contract
         else SurfaceKind.SIMPLE if parsed_choices else SurfaceKind.OPEN_TEXT
     )
     return DecisionRequest(
         decision_id=str(surface.get("decision_id") or clarify_id),
         kind=kind,
         title=str(surface.get("title") or _truncate_utf16(question, 80)),
-        state=str(surface.get("state") or ""),
+        state=str(surface.get("state") or "Work is paused for this answer."),
         context=str(surface.get("context") or ""),
         established=tuple(surface.get("established") or ()),
-        target=str(surface.get("target") or ""),
+        target=str(surface.get("target") or "Current request in this session"),
         decision=str(surface.get("decision") or question),
         choices=tuple(parsed_choices),
         recommendation=str(surface.get("recommendation") or ""),
@@ -235,7 +251,10 @@ def decision_request_from_clarify(
         includes=tuple(surface.get("includes") or ()),
         excludes=tuple(surface.get("excludes") or ()),
         rollback=str(surface.get("rollback") or ""),
-        default_action=str(surface.get("default_action") or ""),
+        default_action=str(
+            surface.get("default_action")
+            or "No action; work remains paused until answered."
+        ),
         context_detail=str(surface.get("context_detail") or ""),
         source_session=str(surface.get("source_session") or source_session),
         expires_at=expires_at,
@@ -623,5 +642,10 @@ def render_decision_content(request: DecisionRequest, limit: int = 2000) -> str:
     # the safe default.
     essential = "\n\n".join(_essential_blocks(request))
     if utf16_len(essential) <= limit:
+        context_marker = "\n\nCONTEXT\n[Context shortened — use the detail control]"
+        if sanitize_visible_text(request.context):
+            available = limit - utf16_len(context_marker)
+            if utf16_len(essential) <= available:
+                return essential + context_marker
         return essential
     return _prefix_utf16(essential, limit)

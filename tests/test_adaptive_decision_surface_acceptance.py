@@ -127,10 +127,12 @@ def test_adapter_uses_adaptive_controls_and_never_forces_complex_or_generic_titl
     clarify = source[source.index("    async def send_clarify("):source.index("    async def send_update_prompt(")]
     assert "kind=SurfaceKind.COMPLEX" not in clarify
     assert "Hermes needs your input" not in clarify
+    assert "decision_request_from_clarify(" in clarify
+    surface_source = SURFACES.read_text()
     for field in ("context", "established", "target", "recommendation", "risk", "includes", "excludes", "rollback", "source_session"):
-        assert f'surface.get("{field}")' in clarify
+        assert f'surface.get("{field}")' in surface_source
     for control in ("Confirm", "Context", "Close", "Continue", "Technical context", "Review & approve", "Evidence", "Cancel"):
-        assert control in source
+        assert control in surface_source
     assert "discord.ui.Select" in source
     assert "ephemeral=True" in source
     assert "resolve_gateway_clarify" in source
@@ -175,5 +177,6 @@ def test_gateway_binds_decision_surface_to_the_exact_source_session():
     ]
     assert "surface_payload = dict(surface or {})" in callback
     assert 'surface_payload["source_session"] = ctx.session_key or ""' in callback
+    assert '"decision_user_id": str(ctx.source.user_id or "")' in callback
     assert "surface=surface_payload or None" in callback
     assert '{"decision_surface": surface_payload}' in callback

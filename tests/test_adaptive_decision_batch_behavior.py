@@ -14,7 +14,25 @@ clarify_namespace = {}
 clarify_source = (CORE / "tools/clarify_tool.py").read_text(encoding="utf-8")
 exec(clarify_source.partition("# --- Registry ---")[0], clarify_namespace)
 TIMEOUT_RESPONSE = clarify_namespace["TIMEOUT_RESPONSE"]
+_normalize_questions = clarify_namespace["_normalize_questions"]
 _run_batch = clarify_namespace["_run_batch"]
+
+
+def test_one_question_batch_is_rejected_before_discord_delivery():
+    normalized, error = _normalize_questions([{"question": "Only question"}])
+
+    assert normalized is None
+    assert error == (
+        "questions requires two to five items; use the top-level question fields "
+        "for one question"
+    )
+
+
+def test_clarify_schema_requires_two_questions_for_a_batch():
+    schema_source = (CORE / "tools/clarify_tool.py").read_text(encoding="utf-8")
+    questions_schema = schema_source[schema_source.index('"questions": {') :]
+
+    assert '"minItems": 2' in questions_schema
 
 
 def _install_clarify_timeout_module(monkeypatch):
@@ -91,5 +109,34 @@ def test_discord_review_close_and_empty_selection_guards_are_explicit():
     assert "self.answers = {}" in batch
     assert "cancel_all=True" in batch
     assert "reviewed_answers=reviewed_answers" in batch
+    assert "and current_answers != reviewed_answers" in batch
+    assert "if stale_review:" in batch
+    assert "Answers changed after this review opened" in batch
+    assert "_prefix_within_utf16_limit(review_content, 1900)" in batch
     assert "if self.resolved:" in batch
     assert "if not selected:" in batch
+
+
+def test_discord_batch_never_reports_success_when_gateway_rejects_resolution():
+    source = (
+        ROOT / "overlay/hermes/plugins/platforms/discord/adapter.py"
+    ).read_text(encoding="utf-8")
+    start = source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    end = source.index("    class ClarifyChoiceView(discord.ui.View):", start)
+    batch = source[start:end]
+
+    assert "gateway_resolved = resolve_gateway_clarify(" in batch
+    assert "if gateway_resolved:" in batch
+    assert "Response was not accepted" in batch
+
+
+def test_discord_batch_timeout_unblocks_gateway_with_typed_timeout_result():
+    source = (
+        ROOT / "overlay/hermes/plugins/platforms/discord/adapter.py"
+    ).read_text(encoding="utf-8")
+    start = source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    end = source.index("    class ClarifyChoiceView(discord.ui.View):", start)
+    batch = source[start:end]
+
+    assert '"answers": {}, "timed_out": True' in batch
+    assert "resolve_gateway_clarify(self.clarify_id, timeout_payload)" in batch

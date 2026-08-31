@@ -46,11 +46,13 @@ def test_send_decision_edits_existing_canonical_message_on_retry():
     decision = method(source, "send_decision", "send_exec_approval")
 
     assert 'metadata.get("decision_message_id")' in decision
+    assert "request.source_session" in decision
     assert "self._decision_message_ids.get(decision_key)" in decision
     assert "self._decision_message_ids[decision_key] = str(message.id)" in decision
     assert "fetch_message(" in decision
     assert "message.edit(**kwargs)" in decision
     assert "channel.send(**kwargs)" in decision
+    assert "except discord.NotFound:" in decision
 
 
 def test_open_text_plain_modal_and_cancel_paths_do_not_race_or_block():
@@ -65,5 +67,44 @@ def test_open_text_plain_modal_and_cancel_paths_do_not_race_or_block():
     assert "class DecisionTextModal(" in view
     assert "custom_id=modal_spec.custom_id" in view
     assert 'cancel_value = f"Cancelled — {self.request.default_action}"' in view
-    assert "resolve_gateway_clarify(self.clarify_id, resolved_value)" in view
+    assert "gateway_resolved = resolve_gateway_clarify(" in view
     assert "await parent._cancel(submitted, from_private=True)" in view
+
+
+def test_adaptive_view_reports_success_only_after_gateway_acceptance():
+    source = ADAPTER.read_text()
+    view = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+
+    assert "gateway_resolved = resolve_gateway_clarify(" in view
+    assert "if gateway_resolved" in view
+    assert "Response was not accepted" in view
+
+
+def test_adaptive_view_timeout_unblocks_the_gateway_with_the_safe_default():
+    source = ADAPTER.read_text()
+    view = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+
+    assert "from tools.clarify_tool import TIMEOUT_RESPONSE" in view
+    assert "resolve_gateway_clarify(self.clarify_id, TIMEOUT_RESPONSE)" in view
+
+
+def test_adaptive_views_bind_callbacks_to_the_initiating_user():
+    source = ADAPTER.read_text()
+    single = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+    batch = source[
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):"):
+        source.index("    class ClarifyChoiceView(discord.ui.View):")
+    ]
+
+    for view in (single, batch):
+        assert "responder_user_id" in view
+        assert "interaction_user_id == self.responder_user_id" in view

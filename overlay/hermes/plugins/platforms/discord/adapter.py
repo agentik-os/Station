@@ -1249,7 +1249,7 @@ class DiscordAdapter(BasePlatformAdapter):
         self.gateway_runner = None  # Set by gateway/run.py for cross-platform delivery
         # Canonical adaptive decision messages, isolated to this profile adapter.
         # Retries resolve by channel + stable decision_id and edit in place.
-        self._decision_message_ids: Dict[Tuple[str, str], str] = {}
+        self._decision_message_ids: Dict[Tuple[str, str, str], str] = {}
         # Voice channel state (per-guild)
         self._voice_clients: Dict[int, Any] = {}  # guild_id -> VoiceClient
         self._voice_locks: Dict[int, asyncio.Lock] = {}  # guild_id -> serialize join/leave
@@ -9180,13 +9180,20 @@ class DiscordAdapter(BasePlatformAdapter):
                     view.guild_id = str(
                         getattr(getattr(channel, "guild", None), "id", "")
                     )
-            decision_key = (str(target_id), request.decision_id)
+            decision_key = (
+                str(target_id),
+                str(request.source_session),
+                request.decision_id,
+            )
             existing_message_id = (
                 metadata.get("decision_message_id") if metadata else None
             ) or self._decision_message_ids.get(decision_key)
             if existing_message_id:
-                message = await channel.fetch_message(int(existing_message_id))
-                await message.edit(**kwargs)
+                try:
+                    message = await channel.fetch_message(int(existing_message_id))
+                    await message.edit(**kwargs)
+                except discord.NotFound:
+                    message = await channel.send(**kwargs)
             else:
                 message = await channel.send(**kwargs)
             self._decision_message_ids[decision_key] = str(message.id)
@@ -9423,6 +9430,9 @@ class DiscordAdapter(BasePlatformAdapter):
                 allowed_role_ids=self._allowed_role_ids,
                 channel_id=str(target_id),
                 profile_id=self.name,
+                responder_user_id=str(
+                    (metadata or {}).get("decision_user_id") or ""
+                ),
             )
             send_metadata = dict(metadata or {})
             return await self.send_decision(
@@ -9508,6 +9518,9 @@ class DiscordAdapter(BasePlatformAdapter):
                 allowed_role_ids=self._allowed_role_ids,
                 channel_id=str(target_id),
                 profile_id=self.name,
+                responder_user_id=str(
+                    (metadata or {}).get("decision_user_id") or ""
+                ),
             )
             return await self.send_decision(
                 chat_id, request, view=view, metadata=dict(metadata or {})
@@ -11968,6 +11981,7 @@ def _define_discord_view_classes() -> None:
             allowed_role_ids: Optional[set],
             channel_id: str,
             profile_id: str,
+            responder_user_id: str,
         ):
             super().__init__(timeout=_read_discord_prompt_timeout())
             self.request = request
@@ -11978,6 +11992,7 @@ def _define_discord_view_classes() -> None:
             self.channel_id = str(channel_id)
             self.guild_id = ""
             self.profile_id = str(profile_id)
+            self.responder_user_id = str(responder_user_id)
             self.selected_value: Optional[str] = None
             self.resolved = False
             self._resolution_lock = threading.Lock()
@@ -12045,10 +12060,15 @@ def _define_discord_view_classes() -> None:
                 getattr(interaction, "guild_id", "")
                 or getattr(getattr(interaction, "guild", None), "id", "")
             )
+            interaction_user_id = str(
+                getattr(getattr(interaction, "user", None), "id", "")
+            )
             return bool(
                 self.profile_id
                 and self.request.source_session
                 and self.request.target
+                and self.responder_user_id
+                and interaction_user_id == self.responder_user_id
                 and interaction_channel == self.channel_id
                 and (not self.guild_id or interaction_guild == self.guild_id)
             )
@@ -12216,9 +12236,12 @@ def _define_discord_view_classes() -> None:
                 )
                 return
             resolved_value = self._gateway_value(selected)
+            gateway_resolved = False
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
-                resolve_gateway_clarify(self.clarify_id, resolved_value)
+                gateway_resolved = resolve_gateway_clarify(
+                    self.clarify_id, resolved_value
+                )
             except Exception:
                 logger.exception(
                     "Adaptive decision resolution failed for %s", self.clarify_id
@@ -12230,15 +12253,33 @@ def _define_discord_view_classes() -> None:
             embeds = getattr(message, "embeds", ()) or ()
             embed = embeds[0] if embeds else None
             if content:
-                content += f"\n\nRESOLVED\nSelected: {sanitize_visible_text(resolved_value)}"
+                content += (
+                    f"\n\nRESOLVED\nSelected: {sanitize_visible_text(resolved_value)}"
+                    if gateway_resolved
+                    else "\n\nUNAVAILABLE\nResponse was not accepted; this decision is no longer active."
+                )
             if embed:
-                embed.color = discord.Color.green()
-                embed.set_footer(text=f"Resolved — {resolved_value}")
+                embed.color = (
+                    discord.Color.green()
+                    if gateway_resolved
+                    else discord.Color.greyple()
+                )
+                embed.set_footer(
+                    text=(
+                        f"Resolved — {resolved_value}"
+                        if gateway_resolved
+                        else "Response was not accepted · decision is no longer active"
+                    )
+                )
             if from_private:
                 private_status = (
-                    "Cancelled. The safe default was applied."
-                    if resolved_value.startswith("Cancelled —")
-                    else "Approved. The canonical decision is resolved."
+                    (
+                        "Cancelled. The safe default was applied."
+                        if resolved_value.startswith("Cancelled —")
+                        else "Approved. The canonical decision is resolved."
+                    )
+                    if gateway_resolved
+                    else "Response was not accepted. The decision is no longer active."
                 )
                 await interaction.response.edit_message(
                     content=private_status, view=None
@@ -12257,6 +12298,15 @@ def _define_discord_view_classes() -> None:
                 self.resolved = True
             for child in self.children:
                 child.disabled = True
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                from tools.clarify_tool import TIMEOUT_RESPONSE
+                resolve_gateway_clarify(self.clarify_id, TIMEOUT_RESPONSE)
+            except Exception:
+                logger.exception(
+                    "Adaptive decision timeout resolution failed for %s",
+                    self.clarify_id,
+                )
             message = self._message
             if not message:
                 return
@@ -12287,6 +12337,7 @@ def _define_discord_view_classes() -> None:
             allowed_role_ids: Optional[set],
             channel_id: str,
             profile_id: str,
+            responder_user_id: str,
         ):
             super().__init__(timeout=_read_discord_prompt_timeout())
             self.request = request
@@ -12297,6 +12348,7 @@ def _define_discord_view_classes() -> None:
             self.channel_id = str(channel_id)
             self.guild_id = ""
             self.profile_id = str(profile_id)
+            self.responder_user_id = str(responder_user_id)
             self.index = 0
             self.answers: Dict[str, Any] = {}
             self.resolved = False
@@ -12324,9 +12376,14 @@ def _define_discord_view_classes() -> None:
                 getattr(interaction, "guild_id", "")
                 or getattr(getattr(interaction, "guild", None), "id", "")
             )
+            interaction_user_id = str(
+                getattr(getattr(interaction, "user", None), "id", "")
+            )
             return bool(
                 self.profile_id
                 and self.request.source_session
+                and self.responder_user_id
+                and interaction_user_id == self.responder_user_id
                 and interaction_channel == self.channel_id
                 and (not self.guild_id or interaction_guild == self.guild_id)
             )
@@ -12605,8 +12662,9 @@ def _define_discord_view_classes() -> None:
                 f"   {sanitize_visible_text(reviewed_answers[str(item['qid'])])}"
                 for index, item in enumerate(self.questions)
             ]
+            review_content = "Review answers\n\n" + "\n\n".join(review_lines)
             await interaction.response.send_message(
-                "Review answers\n\n" + "\n\n".join(review_lines),
+                _prefix_within_utf16_limit(review_content, 1900),
                 view=ReviewConfirmationView(),
                 ephemeral=True,
             )
@@ -12626,8 +12684,15 @@ def _define_discord_view_classes() -> None:
             reviewed_answers: Optional[Dict[str, Any]] = None,
         ) -> None:
             with self._resolution_lock:
+                current_answers = dict(self.answers)
+                stale_review = bool(
+                    reviewed_answers is not None
+                    and current_answers != reviewed_answers
+                )
                 if self.resolved:
                     already_resolved = True
+                elif stale_review:
+                    already_resolved = False
                 else:
                     if cancel_all:
                         self.answers = {}
@@ -12635,15 +12700,25 @@ def _define_discord_view_classes() -> None:
                         self.answers = dict(reviewed_answers)
                     self.resolved = True
                     already_resolved = False
+            if stale_review:
+                await interaction.response.edit_message(
+                    content=(
+                        "Answers changed after this review opened. "
+                        "Return to the decision message and review again."
+                    ),
+                    view=None,
+                )
+                return
             if already_resolved:
                 await interaction.response.send_message(
                     "This decision has already been resolved.", ephemeral=True
                 )
                 return
             payload = json.dumps({"answers": self.answers}, ensure_ascii=False)
+            gateway_resolved = False
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
-                resolve_gateway_clarify(self.clarify_id, payload)
+                gateway_resolved = resolve_gateway_clarify(self.clarify_id, payload)
             except Exception:
                 logger.exception(
                     "Adaptive batch resolution failed for %s", self.clarify_id
@@ -12651,17 +12726,28 @@ def _define_discord_view_classes() -> None:
             for child in self.children:
                 child.disabled = True
             embed = self._current_embed()
-            embed.color = discord.Color.green()
-            embed.set_footer(
-                text=(
-                    "Closed · no answers submitted"
-                    if cancel_all
-                    else f"Submitted · {len(self.answers)}/{len(self.questions)} answered"
+            if gateway_resolved:
+                embed.color = (
+                    discord.Color.greyple() if cancel_all else discord.Color.green()
                 )
-            )
+                embed.set_footer(
+                    text=(
+                        "Closed · no answers submitted"
+                        if cancel_all
+                        else f"Submitted · {len(self.answers)}/{len(self.questions)} answered"
+                    )
+                )
+            else:
+                embed.color = discord.Color.greyple()
+                embed.set_footer(text="Response was not accepted · decision is no longer active")
             if from_private:
                 await interaction.response.edit_message(
-                    content="Answers submitted.", view=None
+                    content=(
+                        "Answers submitted."
+                        if gateway_resolved
+                        else "Response was not accepted. The decision is no longer active."
+                    ),
+                    view=None,
                 )
                 if self._message:
                     await self._message.edit(embed=embed, view=self)
@@ -12676,6 +12762,17 @@ def _define_discord_view_classes() -> None:
                 self.resolved = True
             for child in self.children:
                 child.disabled = True
+            timeout_payload = json.dumps(
+                {"answers": {}, "timed_out": True}, ensure_ascii=False
+            )
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                resolve_gateway_clarify(self.clarify_id, timeout_payload)
+            except Exception:
+                logger.exception(
+                    "Adaptive batch timeout resolution failed for %s",
+                    self.clarify_id,
+                )
             if not self._message:
                 return
             try:
