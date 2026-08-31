@@ -36,11 +36,12 @@ from agent.async_utils import (
     consume_detached_task_result as _consume_background_task_result,
 )
 from agent.display import ToolPreview
-from plugins.platforms.discord.notification_policy import (
-    DiscordNotificationPolicy,
-    NotificationAction,
-)
-from plugins.platforms.discord.status_surfaces import StatusKind, render_status
+try:
+    from .notification_policy import DiscordNotificationPolicy, NotificationAction
+    from .status_surfaces import StatusKind, render_status
+except ImportError:
+    from notification_policy import DiscordNotificationPolicy, NotificationAction
+    from status_surfaces import StatusKind, render_status
 
 logger = logging.getLogger(__name__)
 
@@ -235,20 +236,28 @@ from gateway.platforms.base import (
     validate_inbound_media_size,
 )
 from tools.url_safety import is_safe_url
-from plugins.platforms.discord.interaction_surfaces import (
-    DecisionChoice,
-    DecisionRequest,
-    SurfaceKind,
-    build_decision_embed,
-    render_decision_content,
-    sanitize_visible_text,
-    select_surface_kind,
-)
-from plugins.platforms.discord.command_center import (
-    CommandCenterView,
-    CommandTarget,
-    aggregate_command_targets,
-)
+try:
+    from .interaction_surfaces import (
+        DecisionChoice,
+        DecisionRequest,
+        SurfaceKind,
+        build_decision_embed,
+        render_decision_content,
+        sanitize_visible_text,
+        select_surface_kind,
+    )
+    from .command_center import CommandCenterView, CommandTarget, aggregate_command_targets
+except ImportError:
+    from interaction_surfaces import (
+        DecisionChoice,
+        DecisionRequest,
+        SurfaceKind,
+        build_decision_embed,
+        render_decision_content,
+        sanitize_visible_text,
+        select_surface_kind,
+    )
+    from command_center import CommandCenterView, CommandTarget, aggregate_command_targets
 
 
 async def _read_url_image_with_redirect_guard(
