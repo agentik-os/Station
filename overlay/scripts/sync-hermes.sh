@@ -164,7 +164,7 @@ fi
 for common_file in \
   __init__.py adapter.py command_center.py interaction_surfaces.py \
   notification_policy.py status_surfaces.py recovery.py ffmpeg_utils.py \
-  voice_mixer.py; do
+  voice_mixer.py agk_collective_membership.py; do
   if [ -f "$discord_source/$common_file" ]; then
     install -m 0644 "$discord_source/$common_file" "$discord_target.new/$common_file"
   fi
