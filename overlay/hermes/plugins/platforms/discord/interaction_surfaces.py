@@ -155,6 +155,22 @@ def _essential_blocks(request: DecisionRequest) -> list[str]:
     return blocks
 
 
+def render_compact_clarify_content(
+    request: DecisionRequest, limit: int = 2000
+) -> str:
+    """Render one concise question surface; controls carry choice detail."""
+    blocks = [
+        f"**{sanitize_visible_text(request.title)}**",
+        sanitize_visible_text(request.state),
+        sanitize_visible_text(request.decision),
+    ]
+    risk = sanitize_visible_text(request.risk)
+    if risk:
+        blocks.append(f"Risk: {risk}")
+    blocks.append(f"If unanswered: {sanitize_visible_text(request.default_action)}")
+    return _prefix_utf16("\n\n".join(block for block in blocks if block), limit)
+
+
 @dataclass(frozen=True)
 class RenderedDecisionEmbed:
     title: str
