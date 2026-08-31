@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 ENVIRONMENTS = ("operator", "agentik", "mission", "private", "collective")
@@ -106,7 +107,7 @@ class MessageStore:
         self.path = Path(path)
         self.routes = routes or RouteRegistry()
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS messages(
                 id TEXT PRIMARY KEY, source TEXT NOT NULL, target TEXT NOT NULL,
@@ -138,7 +139,7 @@ class MessageStore:
             raise BrokerError("inter-agent send mode must be note or delegate")
         value = validate_message(body)
         record = {"id": uuid.uuid4().hex, "source": source, "target": target, "body": value, "created_at": time.time(), "acknowledged_at": None, "mode": mode}
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 "INSERT INTO messages(id,source,target,body,created_at,acknowledged_at,mode) VALUES(?,?,?,?,?,NULL,?)",
                 (record["id"], source, target, value, record["created_at"], mode),
@@ -150,7 +151,7 @@ class MessageStore:
             raise BrokerError("unknown Station target")
         if requester != "operator" and requester != target:
             raise BrokerError("cross-Station inbox access denied")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 "SELECT * FROM messages WHERE target=? AND acknowledged_at IS NULL ORDER BY created_at LIMIT ?",
                 (target, max(1, min(int(limit), 100))),
@@ -158,7 +159,7 @@ class MessageStore:
         return [dict(row) for row in rows]
 
     def pending_delegates(self, limit: int = 100) -> list[dict]:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 "SELECT * FROM messages WHERE acknowledged_at IS NULL AND mode='delegate' ORDER BY created_at LIMIT ?",
                 (max(1, min(int(limit), 1000)),),
@@ -166,7 +167,7 @@ class MessageStore:
         return [dict(row) for row in rows]
 
     def ack(self, message_id: str, *, requester: str) -> bool:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute("SELECT target FROM messages WHERE id=?", (str(message_id),)).fetchone()
             if not row:
                 return False

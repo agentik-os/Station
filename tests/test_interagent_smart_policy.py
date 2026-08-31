@@ -1,4 +1,6 @@
+import gc
 import importlib.util
+import os
 from pathlib import Path
 import pytest
 
@@ -53,3 +55,20 @@ def test_recovery_loop_retries_pending_work_without_restart():
   def wait(self,_interval): self.count+=1; return self.count>2
  m.recover_pending_forever(Broker(),Stop(),interval=0)
  assert calls==["tick","tick"]
+
+def test_message_store_closes_connections_during_repeated_recovery_reads(tmp_path):
+ m=load(); db_path=tmp_path/"broker.db"; store=m.MessageStore(db_path)
+ def db_fds():
+  total=0
+  for fd in Path("/proc/self/fd").iterdir():
+   try:
+    if os.readlink(fd)==str(db_path): total+=1
+   except OSError:
+    pass
+  return total
+ before=db_fds(); gc.disable()
+ try:
+  for _ in range(100): store.pending_delegates()
+  assert db_fds() <= before+1
+ finally:
+  gc.enable(); gc.collect()
