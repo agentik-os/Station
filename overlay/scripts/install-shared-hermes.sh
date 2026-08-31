@@ -106,6 +106,20 @@ install -m 0644 "$install_root/hermes/tools/clarify_tool.py" \
 "$official_dir/venv/bin/hermes" --version
 sudo -u operator "$official_dir/venv/bin/python" --version >/dev/null
 
+# Reapply Station-owned plan projection after every upstream Hermes refresh.
+for core_file in run.py turn_context.py display_config.py station_action_message.py station_noise_policy.py; do
+  install -m 0644 "$install_root/hermes-core/gateway/$core_file" \
+    "$official_dir/gateway/$core_file"
+done
+for progress_file in agent/agent_init.py agent/tool_executor.py run_agent.py; do
+  install -m 0644 "$install_root/hermes-core/$progress_file" \
+    "$official_dir/$progress_file"
+done
+for clarify_file in clarify_tool.py clarify_gateway.py; do
+  install -m 0644 "$install_root/hermes-core/tools/$clarify_file" \
+    "$official_dir/tools/$clarify_file"
+done
+
 # The non-interactive official bootstrap deliberately skips messaging setup.
 # Install the exact Discord versions pinned by Hermes so existing gateway units
 # can reconnect immediately after their configuration is remapped.
