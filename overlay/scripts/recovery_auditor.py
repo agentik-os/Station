@@ -99,7 +99,28 @@ def _classify(store: CompletionStore) -> list[dict[str, Any]]:
     results = []
     missions = store.db.execute("SELECT id,state,client,project FROM missions ORDER BY created_at").fetchall()
     for mission in missions:
-        gate = store.completion_gate(str(mission["id"]))
+        mission_id = str(mission["id"])
+        try:
+            gate = store.completion_gate(mission_id)
+        except ValueError as error:
+            if str(error) != "invalid approval identity":
+                raise
+            requirements = [dict(row) for row in store.db.execute(
+                "SELECT * FROM requirements WHERE mission_id=? ORDER BY created_at,id",
+                (mission_id,),
+            )]
+            gate = {
+                "mission_id": mission_id,
+                "classification": "INTEGRITY_ERROR",
+                "permit_done": False,
+                "requirements": requirements,
+                "unresolved": requirements,
+                "human_required": [],
+                "missing_evidence": [],
+                "completion_oracle_passed": False,
+                "ledger_sha256": "",
+                "integrity_error": "invalid_completion_identity",
+            }
         classification = gate["classification"]
         if not gate["requirements"]:
             classification = "UNKNOWN / INSUFFICIENT HISTORY"
