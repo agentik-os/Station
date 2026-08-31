@@ -3396,13 +3396,20 @@ class DiscordAdapter(BasePlatformAdapter):
         self._with_discord_recovery_db(_op)
 
     def _get_discord_command_sync_policy(self) -> str:
-        raw = str(os.getenv("DISCORD_COMMAND_SYNC_POLICY", "safe") or "").strip().lower()
+        configured = self.config.extra.get("command_sync_policy")
+        if configured is None:
+            raw = str(os.getenv("DISCORD_COMMAND_SYNC_POLICY", "safe") or "").strip().lower()
+            source = "DISCORD_COMMAND_SYNC_POLICY"
+        else:
+            raw = str(configured or "").strip().lower()
+            source = "platforms.discord.extra.command_sync_policy"
         if raw in _DISCORD_COMMAND_SYNC_POLICIES:
             return raw
         if raw:
             logger.warning(
-                "[%s] Invalid DISCORD_COMMAND_SYNC_POLICY=%r; falling back to 'safe'",
+                "[%s] Invalid %s=%r; falling back to 'safe'",
                 self.name,
+                source,
                 raw,
             )
         return "safe"
