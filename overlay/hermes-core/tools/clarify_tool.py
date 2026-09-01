@@ -146,10 +146,18 @@ def _build_decision_surface(
     *, question: str, title: str = "", state: str = "", context: str = "",
     established=None, target: str = "", consequences=None,
     recommendation: str = "", default_action: str = "", risk: str = "",
+    kind: str = "", includes=None, excludes=None, rollback: str = "",
+    context_detail: str = "",
 ) -> Optional[dict]:
     """Normalize optional rich-decision fields into one adapter payload."""
-    values = (title, state, context, target, recommendation, default_action, risk)
-    if not any(str(value or "").strip() for value in values) and not established and not consequences:
+    values = (
+        title, state, context, target, recommendation, default_action, risk,
+        kind, rollback, context_detail,
+    )
+    if (
+        not any(str(value or "").strip() for value in values)
+        and not established and not consequences and not includes and not excludes
+    ):
         return None
     clean_target = str(target or "").strip() or "Current requested operation"
     digest_source = f"{question.strip()}\n{clean_target}".encode("utf-8")
@@ -164,6 +172,11 @@ def _build_decision_surface(
         "recommendation": str(recommendation or "").strip(),
         "default_action": str(default_action or "").strip() or "No action until answered",
         "risk": str(risk or "").strip(),
+        "kind": str(kind or "").strip(),
+        "includes": _clean_text_list(includes),
+        "excludes": _clean_text_list(excludes),
+        "rollback": str(rollback or "").strip(),
+        "context_detail": str(context_detail or "").strip(),
     }
 
 
@@ -220,6 +233,11 @@ def _normalize_questions(questions) -> tuple:
         return None, "questions must be an array of question objects."
     if not questions:
         return None, None
+    if len(questions) < 2:
+        return None, (
+            "questions requires two to five items; use the top-level question fields "
+            "for one question"
+        )
     if len(questions) > MAX_QUESTIONS:
         return None, f"questions supports at most {MAX_QUESTIONS} items."
 
@@ -307,7 +325,9 @@ def _batch_result(normalized: List[dict], answers: dict, timed_out: bool) -> str
     return json.dumps(result, ensure_ascii=False)
 
 
-def _run_batch(normalized: List[dict], callback, question: str) -> str:
+def _run_batch(
+    normalized: List[dict], callback, question: str, surface: Optional[dict] = None,
+) -> str:
     """Dispatch a validated batch to the platform callback.
 
     Batch-capable callbacks (a ``questions`` kwarg, detected by signature)
@@ -323,7 +343,19 @@ def _run_batch(normalized: List[dict], callback, question: str) -> str:
     are kept either way.
     """
     if _callback_accepts_questions(callback):
-        raw = callback(question, None, questions=normalized)
+        import inspect
+
+        kwargs: dict = {"questions": normalized}
+        try:
+            params = inspect.signature(callback).parameters
+            if surface and (
+                "surface" in params
+                or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+            ):
+                kwargs["surface"] = surface
+        except (TypeError, ValueError):
+            pass
+        raw = callback(question, None, **kwargs)
 
         answers: dict = {}
         timed_out = False
@@ -349,6 +381,7 @@ def _run_batch(normalized: List[dict], callback, question: str) -> str:
     for entry in normalized:
         raw = _invoke_callback(
             callback, entry["question"], entry["choices"], entry["multi_select"],
+            surface=surface,
         )
         if raw is None or (isinstance(raw, str) and raw.strip() == TIMEOUT_RESPONSE):
             timed_out = True
@@ -371,6 +404,11 @@ def clarify_tool(
     recommendation: str = "",
     default_action: str = "",
     risk: str = "",
+    kind: str = "",
+    includes: Optional[List[str]] = None,
+    excludes: Optional[List[str]] = None,
+    rollback: str = "",
+    context_detail: str = "",
     callback: Optional[Callable] = None,
 ) -> str:
     """
@@ -413,7 +451,17 @@ def clarify_tool(
                     "Clarify tool is not available in this execution context."
                 )
             try:
-                return _run_batch(normalized, callback, str(question or "").strip())
+                surface = _build_decision_surface(
+                    question=str(question or "").strip(), title=title, state=state,
+                    context=context, established=established, target=target,
+                    consequences=consequences, recommendation=recommendation,
+                    default_action=default_action, risk=risk, kind=kind or "batch",
+                    includes=includes, excludes=excludes, rollback=rollback,
+                    context_detail=context_detail,
+                )
+                return _run_batch(
+                    normalized, callback, str(question or "").strip(), surface=surface,
+                )
             except Exception as exc:
                 return tool_error(f"Failed to get user input: {exc}")
         # Empty questions array → fall through to the single-question path.
@@ -453,6 +501,8 @@ def clarify_tool(
             question=question, title=title, state=state, context=context,
             established=established, target=target, consequences=consequences,
             recommendation=recommendation, default_action=default_action, risk=risk,
+            kind=kind, includes=includes, excludes=excludes, rollback=rollback,
+            context_detail=context_detail,
         )
         raw_response = _invoke_callback(
             callback, question, choices, multi_select, surface=surface,
@@ -570,8 +620,30 @@ CLARIFY_SCHEMA = {
             "recommendation": {"type": "string", "description": "The agent's recommendation and brief reason."},
             "default_action": {"type": "string", "description": "What happens if the user does not answer."},
             "risk": {"type": "string", "description": "Material risk, only when genuinely relevant."},
+            "kind": {
+                "type": "string",
+                "enum": ["simple", "complex", "risk", "approval", "open_text", "batch"],
+                "description": "Decision density. Use risk/approval only for material impact.",
+            },
+            "includes": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Exact included scope for risk or approval decisions.",
+            },
+            "excludes": {
+                "type": "array", "items": {"type": "string"},
+                "description": "Exact excluded scope for risk or approval decisions.",
+            },
+            "rollback": {
+                "type": "string",
+                "description": "Recovery path if the approved change fails.",
+            },
+            "context_detail": {
+                "type": "string",
+                "description": "Secondary evidence available through progressive disclosure.",
+            },
             "questions": {
                 "type": "array",
+                "minItems": 2,
                 "maxItems": MAX_QUESTIONS,
                 "description": (
                     "Ask 2-5 INDEPENDENT questions in one call instead of "
@@ -643,6 +715,11 @@ registry.register(
         recommendation=args.get("recommendation", ""),
         default_action=args.get("default_action", ""),
         risk=args.get("risk", ""),
+        kind=args.get("kind", ""),
+        includes=args.get("includes"),
+        excludes=args.get("excludes"),
+        rollback=args.get("rollback", ""),
+        context_detail=args.get("context_detail", ""),
         callback=kw.get("callback")),
     check_fn=check_clarify_requirements,
     emoji="❓",

@@ -10,7 +10,7 @@ def _clarify_method(source: str) -> str:
     return source[start:end]
 
 
-def test_station_packages_single_contextual_discord_question_surface():
+def test_station_packages_single_adaptive_discord_question_surface():
     adapter = (
         ROOT / "overlay/hermes/plugins/platforms/discord/adapter.py"
     ).read_text(encoding="utf-8")
@@ -18,15 +18,11 @@ def test_station_packages_single_contextual_discord_question_surface():
 
     assert "embed=embed" not in clarify
     assert "discord.Embed(" not in clarify
-    assert "channel.send(content=content, view=view)" in clarify
-    assert "channel.send(content=content)" in clarify
-
-    helper_start = adapter.index("    def _self_contained_prompt_content(")
-    helper_end = adapter.index("    def _approval_mention_content(", helper_start)
-    helper = adapter[helper_start:helper_end]
-    assert "utf16_len(prefix)" in helper
-    assert "utf16_len(suffix)" in helper
-    assert "_prefix_within_utf16_limit(body" in helper
+    assert "decision_request_from_clarify(" in clarify
+    assert "AdaptiveDecisionView(" in clarify
+    assert "return await self.send_decision(" in clarify
+    assert "Hermes needs your input" not in clarify
+    assert "ClarifyChoiceView(" not in clarify
 
 
 def test_station_installs_contextual_clarify_contract_into_shared_runtime():

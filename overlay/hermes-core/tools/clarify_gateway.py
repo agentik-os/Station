@@ -31,13 +31,39 @@ Two delivery paths from the adapter:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def run_sequential_batch_fallback(
+    questions: List[Dict[str, Any]],
+    ask: Callable[[Dict[str, Any]], Optional[str]],
+) -> str:
+    """Collect a normalized batch through a legacy one-question callback."""
+    from tools.clarify_tool import TIMEOUT_RESPONSE
+
+    answers: Dict[str, Any] = {}
+    timed_out = False
+    for item in questions:
+        response = ask(item)
+        response_text = response.strip() if isinstance(response, str) else ""
+        if response is None or response_text == TIMEOUT_RESPONSE or (
+            response_text.startswith("[user did not respond within ")
+            and response_text.endswith("]")
+        ):
+            timed_out = True
+            break
+        answers[str(item.get("qid") or "")] = response
+    result: Dict[str, Any] = {"answers": answers}
+    if timed_out:
+        result["timed_out"] = True
+    return json.dumps(result, ensure_ascii=False)
 
 
 # =========================================================================

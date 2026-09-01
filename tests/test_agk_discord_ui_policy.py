@@ -52,7 +52,7 @@ def test_sync_persists_quiet_discord_action_message_contract():
     assert 'mkdir -p "$(dirname "$discord_target")"' in sync
     assert 'cp -a "$discord_source" "$discord_target.new"' in sync
     assert 'cp -a "$discord_target"/. "$discord_target.new"/' in sync
-    assert "adapter.py command_center.py interaction_surfaces.py" in sync
+    assert "adapter.py agk_message_format.py command_center.py interaction_surfaces.py" in sync
     assert 'install -m 0644 "$discord_source/$common_file"' in sync
     assert 'rm -rf "$discord_target"' in sync
     assert 'mv "$discord_target.new" "$discord_target"' in sync

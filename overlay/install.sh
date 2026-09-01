@@ -280,7 +280,7 @@ install -m 0644 "$repo_root/config/power-stack.yaml" \
   "$install_root/config/power-stack.yaml"
 install -m 0644 "$repo_root/config/hermes.env.example" "$install_root/config/hermes.env.example"
 install -d -m 0755 "$install_root/hermes/tools"
-install -m 0644 "$repo_root/hermes/tools/clarify_tool.py" \
+install -m 0644 "$repo_root/hermes-core/tools/clarify_tool.py" \
   "$install_root/hermes/tools/clarify_tool.py"
 for core_file in run.py turn_context.py display_config.py station_action_message.py station_noise_policy.py; do
   install -m 0644 "$repo_root/hermes-core/gateway/$core_file" \

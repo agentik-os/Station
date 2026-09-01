@@ -9,7 +9,7 @@ MODULE = ROOT / "overlay/hermes/plugins/platforms/discord/interaction_surfaces.p
 
 
 def load():
-    spec = importlib.util.spec_from_file_location("compact_clarify_test", MODULE)
+    spec = importlib.util.spec_from_file_location("complete_clarify_test", MODULE)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -17,7 +17,7 @@ def load():
     return module
 
 
-def test_oauth_clarify_is_one_compact_surface_without_repeated_context():
+def test_oauth_complex_surface_preserves_decision_context_target_and_consequences():
     m = load()
     url = "https://connect.example/link/abc"
     request = m.DecisionRequest(
@@ -32,28 +32,35 @@ def test_oauth_clarify_is_one_compact_surface_without_repeated_context():
         ),
         default_action="Leave the connection pending.",
         kind=m.SurfaceKind.COMPLEX,
-        context=f"Open the secure authorization page: {url}",
-        established=("The owner approved creating the connection.",),
-        recommendation="Authorization done after consent succeeds.",
+        context="The owner approved a secure OAuth connection.",
+        established=("The connection exists but is not authorized.",),
+        recommendation="Choose Authorization done only after consent succeeds.",
         risk="Grants access to meeting metadata and transcripts.",
+        source_session="discord:agentik:oauth",
     )
 
-    content = m.render_compact_clarify_content(request)
+    rendered = m.render_decision_surface(request)
 
-    assert content.count(url) == 1
-    assert content.count(request.decision) == 1
-    assert "Connect Granola" in content
-    assert "Waiting for OAuth consent" in content
-    assert "Risk: Grants access to meeting metadata and transcripts." in content
-    assert "If unanswered: Leave the connection pending." in content
-    for noisy_heading in ("TARGET", "CHOICES", "RECOMMENDATION", "ESTABLISHED", "CONTEXT"):
-        assert noisy_heading not in content
-    assert "Verify and continue" not in content
+    assert rendered.mode == "embed"
+    assert rendered.body.count(url) == 1
+    for text in (
+        request.context,
+        request.established[0],
+        request.target,
+        request.decision,
+        "Authorization done — Verify and continue",
+        "Link failed — Diagnose without activation",
+        request.recommendation,
+        request.default_action,
+    ):
+        assert text in rendered.body
 
 
-def test_adapter_routes_decision_backed_clarify_to_compact_plain_content():
+def test_adapter_routes_clarify_through_typed_adaptive_decision():
     source = (ROOT / "overlay/hermes/plugins/platforms/discord/adapter.py").read_text()
     clarify = source[source.index("    async def send_clarify("):source.index("    async def send_update_prompt(")]
-    assert "render_compact_clarify_content(" in clarify
-    assert "channel.send(content=content, view=view)" in clarify
-    assert "return await self.send_decision(" not in clarify
+    assert "decision_request_from_clarify(" in clarify
+    assert "AdaptiveDecisionView(" in clarify
+    assert "return await self.send_decision(" in clarify
+    assert "Hermes needs your input" not in clarify
+    assert "render_compact_clarify_content(" not in clarify

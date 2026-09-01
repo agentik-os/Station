@@ -162,7 +162,7 @@ if [ -d "$discord_target" ]; then
   cp -a "$discord_target"/. "$discord_target.new"/
 fi
 for common_file in \
-  __init__.py adapter.py command_center.py interaction_surfaces.py \
+  __init__.py adapter.py agk_message_format.py command_center.py interaction_surfaces.py \
   notification_policy.py status_surfaces.py recovery.py ffmpeg_utils.py \
   voice_mixer.py agk_collective_membership.py; do
   if [ -f "$discord_source/$common_file" ]; then

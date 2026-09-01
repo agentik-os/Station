@@ -37,9 +37,19 @@ from agent.async_utils import (
 )
 from agent.display import ToolPreview
 try:
+    from .agk_message_format import (
+        append_station_status,
+        normalize_station_reply,
+        truncate_station_text,
+    )
     from .notification_policy import DiscordNotificationPolicy, NotificationAction
     from .status_surfaces import StatusKind, render_status
 except ImportError:
+    from agk_message_format import (
+        append_station_status,
+        normalize_station_reply,
+        truncate_station_text,
+    )
     from notification_policy import DiscordNotificationPolicy, NotificationAction
     from status_surfaces import StatusKind, render_status
 
@@ -251,8 +261,12 @@ try:
         DecisionChoice,
         DecisionRequest,
         SurfaceKind,
+        build_component_blueprint,
         build_decision_embed,
-        render_compact_clarify_content,
+        decision_request_from_clarify,
+        render_decision_surface,
+        render_exact_scope_confirmation,
+        render_open_text_modal,
         render_decision_content,
         sanitize_visible_text,
         select_surface_kind,
@@ -263,8 +277,12 @@ except ImportError:
         DecisionChoice,
         DecisionRequest,
         SurfaceKind,
+        build_component_blueprint,
         build_decision_embed,
-        render_compact_clarify_content,
+        decision_request_from_clarify,
+        render_decision_surface,
+        render_exact_scope_confirmation,
+        render_open_text_modal,
         render_decision_content,
         sanitize_visible_text,
         select_surface_kind,
@@ -1170,6 +1188,10 @@ class DiscordAdapter(BasePlatformAdapter):
     _SPLIT_THRESHOLD = 1900  # near the 2000-char split point
     supports_code_blocks = True  # Discord markdown renders fenced code blocks natively
     splits_long_messages = True  # send() chunks via truncate_message(MAX_MESSAGE_LENGTH)
+
+    def _format_station_message(self, content: str) -> str:
+        """Normalize Station reply styling before standard Discord formatting."""
+        return self.format_message(normalize_station_reply(content))
     # Safety ceiling on split deliveries (#86581): a degenerate turn can
     # produce tens of thousands of characters — without a cap the adapter
     # posts every 2000-char chunk back-to-back and floods the channel (the
@@ -1239,6 +1261,10 @@ class DiscordAdapter(BasePlatformAdapter):
         # accessors fall back to live scope-aware reads (issue #72348).
         self._gate_env_snapshot: Optional[Dict[str, str]] = None
         self.gateway_runner = None  # Set by gateway/run.py for cross-platform delivery
+        # Canonical adaptive decision messages, isolated to this profile adapter.
+        # Retries resolve by channel + stable decision_id and edit in place.
+        self._decision_message_ids: Dict[Tuple[str, str, str], str] = {}
+        self._decision_send_locks: Dict[Tuple[str, str, str], asyncio.Lock] = {}
         # Voice channel state (per-guild)
         self._voice_clients: Dict[int, Any] = {}  # guild_id -> VoiceClient
         self._voice_locks: Dict[int, asyncio.Lock] = {}  # guild_id -> serialize join/leave
@@ -4038,8 +4064,10 @@ class DiscordAdapter(BasePlatformAdapter):
                 return result
 
             # Format and split message if needed
-            formatted = self.format_message(content)
-            full_chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            formatted = self._format_station_message(content)
+            full_chunks = self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
 
             # A long code block or Markdown section is technically splittable,
             # but ceases to be a coherent result. In that case keep the public
@@ -4188,9 +4216,11 @@ class DiscordAdapter(BasePlatformAdapter):
         # _derive_forum_thread_name is defined further down in this same
         # module — no cross-module import needed.
 
-        formatted = self.format_message(content)
+        formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
-            self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
         )
 
         thread_name = _derive_forum_thread_name(content)
@@ -4351,7 +4381,7 @@ class DiscordAdapter(BasePlatformAdapter):
             if not channel:
                 channel = await self._client.fetch_channel(int(chat_id))
             msg = channel.get_partial_message(int(message_id))
-            formatted = self.format_message(content)
+            formatted = self._format_station_message(content)
 
             _preview_key = (str(chat_id), str(message_id))
             _saturated_preview = False
@@ -4362,10 +4392,10 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Pre-flight: oversized payload.  Final edits split-and-deliver;
             # streaming edits truncate a one-message preview in place.
-            if len(formatted) > self.MAX_MESSAGE_LENGTH:
+            if utf16_len(formatted) > self.MAX_MESSAGE_LENGTH:
                 if finalize:
                     full_chunks = self.truncate_message(
-                        formatted, self.MAX_MESSAGE_LENGTH,
+                        formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                     )
                     if self._needs_long_reply_artifact(formatted, full_chunks):
                         await self._edit_long_reply_artifact(
@@ -4382,7 +4412,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         channel, msg, message_id, content,
                     )
                 formatted = self.truncate_message(
-                    formatted, self.MAX_MESSAGE_LENGTH,
+                    formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                 )[0]
                 _saturated_preview = True
                 # Saturated-preview dedup: past the cap, every progressive
@@ -4414,7 +4444,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         )
                     # Mid-stream: truncate and retry in place (no split).
                     truncated = self.truncate_message(
-                        formatted, self.MAX_MESSAGE_LENGTH,
+                        formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                     )[0]
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
@@ -4561,9 +4591,11 @@ class DiscordAdapter(BasePlatformAdapter):
         saw would be the worse outcome.  Only a first-chunk edit failure
         returns ``success=False`` (a real adapter problem, not overflow).
         """
-        formatted = self.format_message(content)
+        formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
-            self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
         )
         if len(chunks) <= 1:
             # Defensive: caller's pre-flight should guarantee >1 chunk, but if
@@ -4668,10 +4700,12 @@ class DiscordAdapter(BasePlatformAdapter):
             metadata_lines.append(f"Type: {content_type}")
         if size_bytes is not None:
             metadata_lines.append(f"Size: {size_bytes} bytes")
-        body_parts = [str(caption or "").strip()]
+        body_parts = [normalize_station_reply(str(caption or "").strip())]
         if gallery_captions:
             body_parts.extend(
-                str(value).strip() for value in gallery_captions if str(value).strip()
+                normalize_station_reply(str(value).strip())
+                for value in gallery_captions
+                if str(value).strip()
             )
         body = "\n".join(part for part in body_parts if part)
         metadata_block = "\n".join(metadata_lines)
@@ -9144,7 +9178,8 @@ class DiscordAdapter(BasePlatformAdapter):
                 channel = await self._client.fetch_channel(int(target_id))
 
             kwargs: Dict[str, Any] = {}
-            if select_surface_kind(request) is SurfaceKind.SIMPLE:
+            rendered_surface = render_decision_surface(request)
+            if rendered_surface.mode == "content":
                 kwargs["content"] = render_decision_content(
                     request, limit=self.MAX_MESSAGE_LENGTH
                 )
@@ -9162,7 +9197,33 @@ class DiscordAdapter(BasePlatformAdapter):
                 )
             if view is not None:
                 kwargs["view"] = view
-            message = await channel.send(**kwargs)
+                if hasattr(view, "channel_id"):
+                    view.channel_id = str(getattr(channel, "id", target_id))
+                if hasattr(view, "guild_id"):
+                    view.guild_id = str(
+                        getattr(getattr(channel, "guild", None), "id", "")
+                    )
+            decision_key = (
+                str(target_id),
+                str(request.source_session),
+                request.decision_id,
+            )
+            decision_lock = self._decision_send_locks.setdefault(
+                decision_key, asyncio.Lock()
+            )
+            async with decision_lock:
+                existing_message_id = self._decision_message_ids.get(decision_key) or (
+                    metadata.get("decision_message_id") if metadata else None
+                )
+                if existing_message_id:
+                    try:
+                        message = await channel.fetch_message(int(existing_message_id))
+                        await message.edit(**kwargs)
+                    except discord.NotFound:
+                        message = await channel.send(**kwargs)
+                else:
+                    message = await channel.send(**kwargs)
+                self._decision_message_ids[decision_key] = str(message.id)
             if view is not None:
                 view._message = message
             return SendResult(success=True, message_id=str(message.id))
@@ -9274,8 +9335,9 @@ class DiscordAdapter(BasePlatformAdapter):
                 # preview for clients that do not expose embed text to assistive
                 # notifications. The embed remains the sole decision/control
                 # surface; this line only identifies what needs attention.
-                send_kwargs["content"] = (
-                    f"{mention_content}\n{sanitize_visible_text(command)}"
+                send_kwargs["content"] = truncate_station_text(
+                    f"{mention_content}\n{sanitize_visible_text(command)}",
+                    self.MAX_MESSAGE_LENGTH,
                 )
                 allowed_mentions_cls = getattr(discord, "AllowedMentions", None)
                 if allowed_mentions_cls is not None:
@@ -9354,145 +9416,154 @@ class DiscordAdapter(BasePlatformAdapter):
         session_key: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        """Render a clarify prompt with one Discord button per choice.
-
-        Multi-choice mode (``choices`` non-empty): renders a button per option
-        plus a final "✏️ Other (type answer)" button. Picking "Other" flips
-        the clarify entry into text-capture mode so the next user message in
-        the session becomes the response. Numeric clicks resolve immediately
-        via ``resolve_gateway_clarify(clarify_id, choice_text)``.
-
-        Open-ended mode (``choices`` empty/None): renders the question as
-        plain content — no buttons. The gateway's text-intercept captures
-        the next message in this session and resolves the clarify.
-
-        Choice normalisation: ``choices`` may contain bare strings OR dicts
-        (LLMs sometimes emit ``[{"description": "..."}]`` instead of bare
-        strings, which would otherwise render as raw Python repr on the
-        button label). Dict choices are unwrapped against the canonical
-        LLM tool-call keys ``label``, ``description``, ``text``, ``title``
-        in that order. Dicts with none of those keys are dropped.
-        """
+        """Send one typed adaptive decision while preserving gateway resolution."""
         if not self._client or not DISCORD_AVAILABLE:
             return SendResult(success=False, error="Not connected")
+        responder_user_id = str((metadata or {}).get("decision_user_id") or "")
+        if not responder_user_id:
+            return SendResult(
+                success=False,
+                error="Adaptive decision requires an initiating user id",
+            )
+
+        def _choice_text(value: Any) -> str:
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, dict):
+                for key in ("label", "description", "text", "title"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        return candidate.strip()
+                return ""
+            if isinstance(value, (list, tuple)):
+                return " ".join(filter(None, (_choice_text(item) for item in value))).strip()
+            return str(value or "").strip()
 
         try:
-            target_id = chat_id
-            if metadata and metadata.get("thread_id"):
-                target_id = metadata["thread_id"]
-
-            channel = self._client.get_channel(int(target_id))
-            if not channel:
-                channel = await self._client.fetch_channel(int(target_id))
-
-
-            # Normalise choices: LLMs sometimes emit `[{"description": "..."}]`
-            # instead of bare strings, which would render as raw Python repr on
-            # the button label. Unwrap the common shapes, then stringify.
-            def _flatten_choice(c):
-                if c is None:
-                    return ""
-                if isinstance(c, str):
-                    return c.strip()
-                if isinstance(c, dict):
-                    # Prefer the canonical LLM tool-call user-facing keys
-                    # in the order the LLM is most likely to emit them.
-                    # 'name' and 'value' are deliberately NOT here: they're
-                    # Discord-component-shaped fields that could appear in
-                    # dicts that aren't meant to be choices (e.g., a
-                    # developer-error wiring that passes a Button-shaped
-                    # object). Picking them would leak raw enum values
-                    # or 4-char model identifiers onto user-facing buttons.
-                    # If a dict has none of the canonical keys, drop it
-                    # rather than picking some random field — a garbage
-                    # button label is worse than no button at all.
-                    for key in ("label", "description", "text", "title"):
-                        v = c.get(key)
-                        if isinstance(v, str) and v.strip():
-                            return v.strip()
-                    return ""
-                if isinstance(c, (list, tuple)):
-                    return " ".join(_flatten_choice(x) for x in c).strip()
-                return str(c).strip()
-
-            clean_choices = [
-                s for s in (_flatten_choice(c) for c in (choices or [])) if s
-            ]
-            # Discord allows up to 5 buttons per row, 5 rows per view = 25.
-            # We reserve one slot for the "Other" button, so cap at 24 choices.
-            clean_choices = clean_choices[:24]
-
-            if clean_choices:
-                view = ClarifyChoiceView(
-                    choices=clean_choices,
-                    clarify_id=clarify_id,
-                    allowed_user_ids=self._allowed_user_ids,
-                    allowed_role_ids=self._allowed_role_ids,
-                )
-            else:
-                view = None
-
+            clean_choices = tuple(
+                text for text in (_choice_text(choice) for choice in (choices or ())) if text
+            )
             surface = metadata.get("decision_surface") if metadata else None
-            if isinstance(surface, dict):
-                consequences = list(surface.get("consequences") or [])
-                decision_choices = []
-                for index, label in enumerate(clean_choices):
-                    bare_label = str(label)
-                    recommended = bare_label.casefold().endswith("(recommended)")
-                    if recommended:
-                        bare_label = bare_label[: -len("(Recommended)")].strip()
-                    consequence = (
-                        str(consequences[index]).strip()
-                        if index < len(consequences) and str(consequences[index]).strip()
-                        else "Select this option."
-                    )
-                    decision_choices.append(DecisionChoice(
-                        id=f"choice-{index + 1}",
-                        label=bare_label,
-                        consequence=consequence,
-                        recommended=recommended,
-                    ))
-                request = DecisionRequest(
-                    decision_id=str(surface.get("decision_id") or clarify_id),
-                    title=str(surface.get("title") or "Decision required"),
-                    state=str(surface.get("state") or "Awaiting your decision"),
-                    target=str(surface.get("target") or "Current requested operation"),
-                    decision=str(question or "").strip(),
-                    choices=decision_choices,
-                    default_action=str(surface.get("default_action") or "No action until answered"),
-                    kind=SurfaceKind.COMPLEX,
-                    context=str(surface.get("context") or "Decision details are available in this turn."),
-                    established=tuple(surface.get("established") or ("No answer has been applied.",)),
-                    recommendation=str(surface.get("recommendation") or ""),
-                    risk=str(surface.get("risk") or ""),
-                )
-                content = render_compact_clarify_content(
-                    request, limit=self.MAX_MESSAGE_LENGTH
-                )
-                msg = await channel.send(content=content, view=view) if view else await channel.send(content=content)
-                if view:
-                    setattr(view, "_message", msg)
-                return SendResult(success=True, message_id=str(msg.id))
+            request = decision_request_from_clarify(
+                question=question,
+                choices=clean_choices,
+                clarify_id=clarify_id,
+                source_session=session_key,
+                surface=surface if isinstance(surface, dict) else None,
+            )
+            target_id = (
+                metadata.get("thread_id")
+                if metadata and metadata.get("thread_id")
+                else chat_id
+            )
+            view = AdaptiveDecisionView(
+                request=request,
+                clarify_id=clarify_id,
+                gateway_choices=clean_choices,
+                allowed_user_ids=self._allowed_user_ids,
+                allowed_role_ids=self._allowed_role_ids,
+                channel_id=str(target_id),
+                profile_id=self.name,
+                responder_user_id=responder_user_id,
+            )
+            send_metadata = dict(metadata or {})
+            return await self.send_decision(
+                chat_id, request, view=view, metadata=send_metadata
+            )
+        except Exception as exc:
+            logger.warning("[%s] send_clarify failed: %s", self.name, exc)
+            return SendResult(success=False, error=str(exc))
 
-            # Clarify owns one self-contained visible surface. Rendering the
-            # same prompt in both content and an embed makes Discord clients
-            # show the question twice and separates it from its context.
-            clarify_tail = (
-                "\n\nPick one below, or click ✏️ Other to type a custom answer."
-                if clean_choices
-                else "\n\nReply in this channel with your answer."
+    async def send_clarify_batch(
+        self,
+        chat_id: str,
+        question: str,
+        questions: list,
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send one navigable Discord surface for a clarify question batch."""
+        if not self._client or not DISCORD_AVAILABLE:
+            return SendResult(success=False, error="Not connected")
+        responder_user_id = str((metadata or {}).get("decision_user_id") or "")
+        if not responder_user_id:
+            return SendResult(
+                success=False,
+                error="Adaptive decision requires an initiating user id",
             )
-            content = self._self_contained_prompt_content(
-                "❓ **Hermes needs your input**", str(question or "").strip(),
-                tail=clarify_tail,
+
+        try:
+            source_session = str(
+                (metadata or {}).get("source_session") or session_key or ""
             )
-            msg = await channel.send(content=content, view=view) if view else await channel.send(content=content)
-            if view:
-                view._message = msg  # store for on_timeout expiration editing
-            return SendResult(success=True, message_id=str(msg.id))
-        except Exception as e:
-            logger.warning("[%s] send_clarify failed: %s", self.name, e)
-            return SendResult(success=False, error=str(e))
+            batch_items = []
+            normalized_questions = []
+            for index, raw in enumerate(questions or ()):
+                item = dict(raw or {})
+                qid = str(item.get("qid") or f"q{index}")
+                display_choices = tuple(
+                    str(choice).strip()
+                    for choice in (item.get("choices") or ())
+                    if str(choice).strip()
+                )
+                answer_choices = tuple(
+                    str(choice).strip()
+                    for choice in (item.get("choices_offered") or ())
+                    if str(choice).strip()
+                )
+                request = decision_request_from_clarify(
+                    question=str(item.get("question") or ""),
+                    choices=display_choices,
+                    clarify_id=f"{clarify_id}:{qid}",
+                    source_session=source_session,
+                    surface=None,
+                )
+                batch_items.append(request)
+                normalized_questions.append(
+                    {
+                        **item,
+                        "qid": qid,
+                        "choices": display_choices,
+                        "answer_choices": answer_choices or display_choices,
+                    }
+                )
+
+            request = DecisionRequest(
+                decision_id=f"clarify-batch-{clarify_id}",
+                title="Decisions needed",
+                state=(
+                    f"{len(batch_items)} answers are needed before work can continue."
+                ),
+                target="Current request in this session",
+                decision=str(question or "Review and answer each question."),
+                choices=(),
+                default_action="No action; work remains paused until the batch is submitted.",
+                kind=SurfaceKind.BATCH,
+                source_session=source_session,
+                batch_items=tuple(batch_items),
+            )
+            target_id = (
+                metadata.get("thread_id")
+                if metadata and metadata.get("thread_id")
+                else chat_id
+            )
+            view = AdaptiveBatchDecisionView(
+                request=request,
+                questions=tuple(normalized_questions),
+                clarify_id=clarify_id,
+                allowed_user_ids=self._allowed_user_ids,
+                allowed_role_ids=self._allowed_role_ids,
+                channel_id=str(target_id),
+                profile_id=self.name,
+                responder_user_id=responder_user_id,
+            )
+            return await self.send_decision(
+                chat_id, request, view=view, metadata=dict(metadata or {})
+            )
+        except Exception as exc:
+            logger.warning("[%s] send_clarify_batch failed: %s", self.name, exc)
+            return SendResult(success=False, error=str(exc))
 
     async def send_update_prompt(
         self, chat_id: str, prompt: str, default: str = "",
@@ -10957,7 +11028,7 @@ def _define_discord_view_classes() -> None:
     lazy install sets DISCORD_AVAILABLE=True but leaves the classes
     undefined, causing NameError on the first button interaction.
     """
-    global ExecApprovalView, SlashConfirmView, UpdatePromptView, ModelPickerView, ClarifyChoiceView, ChoicePickerView
+    global ExecApprovalView, SlashConfirmView, UpdatePromptView, ModelPickerView, AdaptiveDecisionView, AdaptiveBatchDecisionView, ClarifyChoiceView, ChoicePickerView
 
     class ExecApprovalView(discord.ui.View):
         """
@@ -11932,6 +12003,846 @@ def _define_discord_view_classes() -> None:
                     await msg.edit(embed=embed, view=self)
                 except Exception:
                     pass
+
+    class AdaptiveDecisionView(discord.ui.View):
+        """Canonical adaptive clarify controls with one-message lifecycle."""
+
+        def __init__(
+            self,
+            *,
+            request: DecisionRequest,
+            clarify_id: str,
+            gateway_choices: Tuple[str, ...],
+            allowed_user_ids: set,
+            allowed_role_ids: Optional[set],
+            channel_id: str,
+            profile_id: str,
+            responder_user_id: str,
+        ):
+            super().__init__(timeout=_read_discord_prompt_timeout())
+            self.request = request
+            self.clarify_id = clarify_id
+            self.gateway_choices = tuple(gateway_choices)
+            self.allowed_user_ids = allowed_user_ids
+            self.allowed_role_ids = allowed_role_ids or set()
+            self.channel_id = str(channel_id)
+            self.guild_id = ""
+            self.profile_id = str(profile_id)
+            self.responder_user_id = str(responder_user_id)
+            self.selected_value: Optional[str] = None
+            self.resolved = False
+            self._resolution_lock = threading.Lock()
+            self._message = None
+            self._build_controls()
+
+        def _build_controls(self) -> None:
+            blueprint = build_component_blueprint(self.request)
+            for spec in blueprint:
+                if spec.kind == "select":
+                    options = [
+                        discord.SelectOption(
+                            label=_prefix_within_utf16_limit(option.label, 100),
+                            value=_prefix_within_utf16_limit(option.value, 100),
+                            description=_prefix_within_utf16_limit(
+                                option.description, 100
+                            ),
+                            default=False,
+                        )
+                        for option in spec.options
+                    ]
+                    select = discord.ui.Select(
+                        placeholder="Choose one…",
+                        options=options,
+                        min_values=1,
+                        max_values=1,
+                        custom_id=spec.custom_id,
+                    )
+                    select.callback = self._on_select
+                    self.add_item(select)
+                    continue
+                style = (
+                    discord.ButtonStyle.primary
+                    if spec.custom_id.endswith(":confirm")
+                    else discord.ButtonStyle.danger
+                    if spec.custom_id.endswith(":close")
+                    and select_surface_kind(self.request) in {
+                        SurfaceKind.RISK, SurfaceKind.APPROVAL
+                    }
+                    else discord.ButtonStyle.secondary
+                )
+                button = discord.ui.Button(
+                    label=spec.label,
+                    style=style,
+                    custom_id=spec.custom_id,
+                )
+                if spec.custom_id.endswith(":confirm"):
+                    button.callback = self._on_primary
+                elif spec.custom_id.endswith(":context"):
+                    button.callback = self._on_context
+                else:
+                    button.callback = self._on_close
+                self.add_item(button)
+
+        def _check_auth(self, interaction: "discord.Interaction") -> bool:
+            if not _component_check_auth(
+                interaction, self.allowed_user_ids, self.allowed_role_ids
+            ):
+                return False
+            interaction_channel = str(
+                getattr(interaction, "channel_id", "")
+                or getattr(getattr(interaction, "channel", None), "id", "")
+            )
+            interaction_guild = str(
+                getattr(interaction, "guild_id", "")
+                or getattr(getattr(interaction, "guild", None), "id", "")
+            )
+            interaction_user_id = str(
+                getattr(getattr(interaction, "user", None), "id", "")
+            )
+            return bool(
+                self.profile_id
+                and self.request.source_session
+                and self.request.target
+                and self.responder_user_id
+                and interaction_user_id == self.responder_user_id
+                and interaction_channel == self.channel_id
+                and (not self.guild_id or interaction_guild == self.guild_id)
+            )
+
+        async def _deny(self, interaction: "discord.Interaction") -> None:
+            await interaction.response.send_message(
+                "You are not authorized for this decision.", ephemeral=True
+            )
+
+        async def _on_select(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            values = getattr(interaction.data, "values", None)
+            if values is None and isinstance(interaction.data, dict):
+                values = interaction.data.get("values")
+            self.selected_value = str((values or [""])[0])
+            await interaction.response.defer()
+
+        async def _on_context(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            detail = sanitize_visible_text(
+                self.request.context_detail or self.request.context
+            ) or "No additional context is available."
+            await interaction.response.send_message(
+                truncate_station_text(detail, 1900), ephemeral=True
+            )
+
+        async def _on_primary(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            kind = select_surface_kind(self.request)
+            if kind is SurfaceKind.OPEN_TEXT:
+                modal_spec = render_open_text_modal(self.request)
+                parent = self
+
+                class DecisionTextModal(discord.ui.Modal):
+                    def __init__(modal_self):
+                        super().__init__(
+                            title=modal_spec.title,
+                            custom_id=modal_spec.custom_id,
+                        )
+
+                    response = discord.ui.TextInput(
+                        label=modal_spec.input_label,
+                        placeholder=modal_spec.placeholder,
+                        required=True,
+                        max_length=2000,
+                        custom_id=modal_spec.custom_id,
+                    )
+
+                    async def on_submit(modal_self, submitted):
+                        if not parent._check_auth(submitted):
+                            await parent._deny(submitted)
+                            return
+                        await parent._resolve(
+                            submitted, str(modal_self.response.value), from_private=True
+                        )
+
+                await interaction.response.send_modal(DecisionTextModal())
+                return
+            if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
+                reviewed_value = self.selected_value
+                if not reviewed_value:
+                    await interaction.response.send_message(
+                        "Choose an option before opening confirmation.", ephemeral=True
+                    )
+                    return
+                confirmation = render_exact_scope_confirmation(
+                    self.request, selected_value=reviewed_value
+                )
+                parent = self
+
+                class ScopeConfirmationView(discord.ui.View):
+                    def __init__(scope_self):
+                        super().__init__(timeout=120)
+                        scope_self.reviewed_value = reviewed_value
+                        approve = discord.ui.Button(
+                            label="Approve exact scope",
+                            style=discord.ButtonStyle.danger,
+                            custom_id=confirmation.confirm_custom_id,
+                        )
+                        approve.callback = scope_self._approve
+                        scope_self.add_item(approve)
+                        cancel = discord.ui.Button(
+                            label="Cancel",
+                            style=discord.ButtonStyle.secondary,
+                            custom_id=confirmation.cancel_custom_id,
+                        )
+                        cancel.callback = scope_self._cancel
+                        scope_self.add_item(cancel)
+
+                    async def _approve(scope_self, submitted):
+                        if not parent._check_auth(submitted):
+                            await parent._deny(submitted)
+                            return
+                        if parent.selected_value != scope_self.reviewed_value:
+                            await submitted.response.send_message(
+                                "Selection changed after this confirmation opened. "
+                                "Close it and confirm the current selection.",
+                                ephemeral=True,
+                            )
+                            return
+                        await parent._resolve(
+                            submitted, scope_self.reviewed_value, from_private=True
+                        )
+
+                    async def _cancel(scope_self, submitted):
+                        if not parent._check_auth(submitted):
+                            await parent._deny(submitted)
+                            return
+                        for child in scope_self.children:
+                            child.disabled = True
+                        await parent._cancel(submitted, from_private=True)
+
+                await interaction.response.send_message(
+                    confirmation.body,
+                    view=ScopeConfirmationView(),
+                    ephemeral=True,
+                )
+                return
+            if not self.selected_value:
+                await interaction.response.send_message(
+                    "Choose an option before continuing.", ephemeral=True
+                )
+                return
+            await self._resolve(interaction, self.selected_value)
+
+        async def _on_close(self, interaction: "discord.Interaction") -> None:
+            await self._cancel(interaction)
+
+        async def _cancel(
+            self,
+            interaction: "discord.Interaction",
+            *,
+            from_private: bool = False,
+        ) -> None:
+            cancel_value = f"Cancelled — {self.request.default_action}"
+            await self._resolve(
+                interaction, cancel_value, from_private=from_private
+            )
+
+        def _gateway_value(self, selected: str) -> str:
+            for index, choice in enumerate(self.request.choices):
+                if choice.id == selected:
+                    if index < len(self.gateway_choices):
+                        return self.gateway_choices[index]
+                    return choice.label
+            return selected
+
+        async def _resolve(
+            self,
+            interaction: "discord.Interaction",
+            selected: str,
+            *,
+            from_private: bool = False,
+        ) -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            with self._resolution_lock:
+                if self.resolved:
+                    already_resolved = True
+                else:
+                    self.resolved = True
+                    already_resolved = False
+            if already_resolved:
+                await interaction.response.send_message(
+                    "This decision has already been resolved.", ephemeral=True
+                )
+                return
+            resolved_value = self._gateway_value(selected)
+            gateway_resolved = False
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                gateway_resolved = resolve_gateway_clarify(
+                    self.clarify_id, resolved_value
+                )
+            except Exception:
+                logger.exception(
+                    "Adaptive decision resolution failed for %s", self.clarify_id
+                )
+            for child in self.children:
+                child.disabled = True
+            message = self._message or getattr(interaction, "message", None)
+            content = getattr(message, "content", None)
+            embeds = getattr(message, "embeds", ()) or ()
+            embed = embeds[0] if embeds else None
+            if content:
+                content = append_station_status(
+                    content,
+                    "RESOLVED" if gateway_resolved else "UNAVAILABLE",
+                    (
+                        f"Selected: {sanitize_visible_text(resolved_value)}"
+                        if gateway_resolved
+                        else "Response was not accepted; this decision is no longer active."
+                    ),
+                    limit=2000,
+                )
+            if embed:
+                embed.color = (
+                    discord.Color.green()
+                    if gateway_resolved
+                    else discord.Color.greyple()
+                )
+                embed.set_footer(
+                    text=(
+                        truncate_station_text(f"Resolved — {resolved_value}", 2048)
+                        if gateway_resolved
+                        else "Response was not accepted · decision is no longer active"
+                    )
+                )
+            if from_private:
+                private_status = (
+                    (
+                        "Cancelled. No action was applied by this confirmation."
+                        if resolved_value.startswith("Cancelled —")
+                        else "Approved. The canonical decision is resolved."
+                    )
+                    if gateway_resolved
+                    else "Response was not accepted. The decision is no longer active."
+                )
+                await interaction.response.edit_message(
+                    content=private_status, view=None
+                )
+                if message:
+                    await message.edit(content=content, embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(
+                    content=content, embed=embed, view=self
+                )
+
+        async def on_timeout(self):
+            with self._resolution_lock:
+                if self.resolved:
+                    return
+                self.resolved = True
+            for child in self.children:
+                child.disabled = True
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                from tools.clarify_tool import TIMEOUT_RESPONSE
+                resolve_gateway_clarify(self.clarify_id, TIMEOUT_RESPONSE)
+            except Exception:
+                logger.exception(
+                    "Adaptive decision timeout resolution failed for %s",
+                    self.clarify_id,
+                )
+            message = self._message
+            if not message:
+                return
+            try:
+                content = getattr(message, "content", None)
+                embeds = getattr(message, "embeds", ()) or ()
+                embed = embeds[0] if embeds else None
+                expiration = truncate_station_text(
+                    f"Prompt expired — {self.request.default_action}", 2048
+                )
+                if content:
+                    content = append_station_status(
+                        content,
+                        "EXPIRED",
+                        sanitize_visible_text(self.request.default_action),
+                        limit=2000,
+                    )
+                if embed:
+                    embed.color = discord.Color.greyple()
+                    embed.set_footer(text=expiration)
+                await message.edit(content=content, embed=embed, view=self)
+            except Exception:
+                logger.debug("Unable to expire adaptive decision", exc_info=True)
+
+    class AdaptiveBatchDecisionView(discord.ui.View):
+        """One-message navigator that resolves a clarify batch atomically."""
+
+        def __init__(
+            self,
+            *,
+            request: DecisionRequest,
+            questions: Tuple[Dict[str, Any], ...],
+            clarify_id: str,
+            allowed_user_ids: set,
+            allowed_role_ids: Optional[set],
+            channel_id: str,
+            profile_id: str,
+            responder_user_id: str,
+        ):
+            super().__init__(timeout=_read_discord_prompt_timeout())
+            self.request = request
+            self.questions = tuple(questions)
+            self.clarify_id = clarify_id
+            self.allowed_user_ids = allowed_user_ids
+            self.allowed_role_ids = allowed_role_ids or set()
+            self.channel_id = str(channel_id)
+            self.guild_id = ""
+            self.profile_id = str(profile_id)
+            self.responder_user_id = str(responder_user_id)
+            self.index = 0
+            self.answers: Dict[str, Any] = {}
+            self.resolved = False
+            self._resolution_lock = threading.Lock()
+            self._message = None
+            self._build_controls()
+
+        @property
+        def _current(self) -> Dict[str, Any]:
+            return self.questions[self.index]
+
+        def _custom_id(self, action: str) -> str:
+            return f"decision:{self.request.decision_id}:batch:{action}"
+
+        def _check_auth(self, interaction: "discord.Interaction") -> bool:
+            if not _component_check_auth(
+                interaction, self.allowed_user_ids, self.allowed_role_ids
+            ):
+                return False
+            interaction_channel = str(
+                getattr(interaction, "channel_id", "")
+                or getattr(getattr(interaction, "channel", None), "id", "")
+            )
+            interaction_guild = str(
+                getattr(interaction, "guild_id", "")
+                or getattr(getattr(interaction, "guild", None), "id", "")
+            )
+            interaction_user_id = str(
+                getattr(getattr(interaction, "user", None), "id", "")
+            )
+            return bool(
+                self.profile_id
+                and self.request.source_session
+                and self.responder_user_id
+                and interaction_user_id == self.responder_user_id
+                and interaction_channel == self.channel_id
+                and (not self.guild_id or interaction_guild == self.guild_id)
+            )
+
+        async def _deny(self, interaction: "discord.Interaction") -> None:
+            await interaction.response.send_message(
+                "You are not authorized for this decision.", ephemeral=True
+            )
+
+        def _build_controls(self) -> None:
+            self.clear_items()
+            item = self._current
+            qid = str(item["qid"])
+            choices = tuple(item.get("choices") or ())
+            answer_choices = tuple(item.get("answer_choices") or choices)
+            if choices:
+                selected = self.answers.get(qid)
+                selected_values = set(selected if isinstance(selected, list) else [selected])
+                options = [
+                    discord.SelectOption(
+                        label=_prefix_within_utf16_limit(choice, 100),
+                        value=str(index),
+                        default=answer_choices[index] in selected_values,
+                    )
+                    for index, choice in enumerate(choices)
+                ]
+                select = discord.ui.Select(
+                    placeholder="Choose one or more…" if item.get("multi_select") else "Choose one…",
+                    options=options,
+                    min_values=1,
+                    max_values=len(options) if item.get("multi_select") else 1,
+                    custom_id=self._custom_id(f"{qid}:select"),
+                    row=0,
+                )
+                select.callback = self._on_select
+                self.add_item(select)
+            else:
+                write = discord.ui.Button(
+                    label="Write response",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=self._custom_id(f"{qid}:text"),
+                    row=0,
+                )
+                write.callback = self._on_write
+                self.add_item(write)
+
+            controls = (
+                ("Previous", "previous", self._on_previous),
+                ("Next", "next", self._on_next),
+                ("Review answers", "review", self._on_review),
+                ("Close", "close", self._on_close),
+            )
+            for label, action, callback in controls:
+                button = discord.ui.Button(
+                    label=label,
+                    style=(
+                        discord.ButtonStyle.primary
+                        if action == "review"
+                        else discord.ButtonStyle.secondary
+                    ),
+                    custom_id=self._custom_id(action),
+                    row=1,
+                    disabled=(
+                        (action == "previous" and self.index == 0)
+                        or (action == "next" and self.index == len(self.questions) - 1)
+                    ),
+                )
+                button.callback = callback
+                self.add_item(button)
+
+        def _current_embed(self):
+            item = self.request.batch_items[self.index]
+            rendered = build_decision_embed(item)
+            embed = discord.Embed(
+                title=rendered.title,
+                description=rendered.description,
+                color=discord.Color.greyple(),
+            )
+            qid = str(self._current["qid"])
+            state = "answered" if qid in self.answers else "unanswered"
+            embed.set_footer(
+                text=(
+                    f"Question {self.index + 1} of {len(self.questions)} · "
+                    f"{state} · {len(self.answers)}/{len(self.questions)} complete"
+                )
+            )
+            return embed
+
+        async def _navigate(
+            self, interaction: "discord.Interaction", offset: int
+        ) -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            self.index = max(0, min(len(self.questions) - 1, self.index + offset))
+            self._build_controls()
+            await interaction.response.edit_message(
+                embed=self._current_embed(), view=self
+            )
+
+        async def _on_previous(self, interaction: "discord.Interaction") -> None:
+            await self._navigate(interaction, -1)
+
+        async def _on_next(self, interaction: "discord.Interaction") -> None:
+            await self._navigate(interaction, 1)
+
+        async def _on_select(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            values = (
+                interaction.data.get("values", [])
+                if isinstance(interaction.data, dict)
+                else getattr(interaction.data, "values", [])
+            )
+            choices = tuple(self._current.get("choices") or ())
+            answer_choices = tuple(
+                self._current.get("answer_choices") or choices
+            )
+            selected = [
+                answer_choices[int(value)]
+                for value in values
+                if str(value).isdigit() and int(value) < len(answer_choices)
+            ]
+            if not selected:
+                await interaction.response.send_message(
+                    "Choose at least one valid option.", ephemeral=True
+                )
+                return
+            with self._resolution_lock:
+                if self.resolved:
+                    became_resolved = True
+                else:
+                    self.answers[str(self._current["qid"])] = (
+                        selected if self._current.get("multi_select") else selected[0]
+                    )
+                    became_resolved = False
+            if became_resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            self._build_controls()
+            await interaction.response.edit_message(
+                embed=self._current_embed(), view=self
+            )
+
+        async def _on_write(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            if self.resolved:
+                await interaction.response.send_message(
+                    "This decision is no longer active.", ephemeral=True
+                )
+                return
+            parent = self
+            qid = str(self._current["qid"])
+
+            class BatchTextModal(discord.ui.Modal):
+                def __init__(modal_self):
+                    super().__init__(
+                        title="Write response",
+                        custom_id=parent._custom_id(f"{qid}:modal"),
+                    )
+
+                response = discord.ui.TextInput(
+                    label="Response",
+                    placeholder="Type the information needed to continue",
+                    required=True,
+                    max_length=2000,
+                    custom_id="batch-response",
+                )
+
+                async def on_submit(modal_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    if parent.resolved:
+                        await submitted.response.send_message(
+                            "This decision is no longer active.", ephemeral=True
+                        )
+                        return
+                    with parent._resolution_lock:
+                        if parent.resolved:
+                            became_resolved = True
+                        else:
+                            parent.answers[qid] = str(
+                                modal_self.response.value
+                            ).strip()
+                            became_resolved = False
+                    if became_resolved:
+                        await submitted.response.send_message(
+                            "This decision is no longer active.", ephemeral=True
+                        )
+                        return
+                    parent._build_controls()
+                    await submitted.response.send_message(
+                        "Response saved.", ephemeral=True
+                    )
+                    if parent._message:
+                        await parent._message.edit(
+                            embed=parent._current_embed(), view=parent
+                        )
+
+            await interaction.response.send_modal(BatchTextModal())
+
+        async def _on_review(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            with self._resolution_lock:
+                reviewed_answers = dict(self.answers)
+            missing = [
+                str(item["qid"])
+                for item in self.questions
+                if str(item["qid"]) not in reviewed_answers
+            ]
+            if missing:
+                await interaction.response.send_message(
+                    f"Answer every question before submitting. Missing: {', '.join(missing)}",
+                    ephemeral=True,
+                )
+                return
+            parent = self
+
+            class ReviewConfirmationView(discord.ui.View):
+                def __init__(review_self):
+                    super().__init__(timeout=120)
+                    submit = discord.ui.Button(
+                        label="Submit answers",
+                        style=discord.ButtonStyle.primary,
+                        custom_id=parent._custom_id("submit"),
+                    )
+                    submit.callback = review_self._submit
+                    review_self.add_item(submit)
+                    back = discord.ui.Button(
+                        label="Back",
+                        style=discord.ButtonStyle.secondary,
+                        custom_id=parent._custom_id("review-back"),
+                    )
+                    back.callback = review_self._back
+                    review_self.add_item(back)
+
+                async def _submit(review_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    await parent._resolve(
+                        submitted,
+                        from_private=True,
+                        reviewed_answers=reviewed_answers,
+                    )
+
+                async def _back(review_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    await submitted.response.edit_message(
+                        content="Review closed. Continue editing the decision message.",
+                        view=None,
+                    )
+
+            review_lines = [
+                f"{index + 1}. {sanitize_visible_text(item.get('question'))}\n"
+                f"   {sanitize_visible_text(reviewed_answers[str(item['qid'])])}"
+                for index, item in enumerate(self.questions)
+            ]
+            review_content = "Review answers\n\n" + "\n\n".join(review_lines)
+            await interaction.response.send_message(
+                _prefix_within_utf16_limit(review_content, 1900),
+                view=ReviewConfirmationView(),
+                ephemeral=True,
+            )
+
+        async def _on_close(self, interaction: "discord.Interaction") -> None:
+            if not self._check_auth(interaction):
+                await self._deny(interaction)
+                return
+            await self._resolve(interaction, cancel_all=True)
+
+        async def _resolve(
+            self,
+            interaction: "discord.Interaction",
+            *,
+            from_private: bool = False,
+            cancel_all: bool = False,
+            reviewed_answers: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            with self._resolution_lock:
+                current_answers = dict(self.answers)
+                stale_review = bool(
+                    reviewed_answers is not None
+                    and current_answers != reviewed_answers
+                )
+                if self.resolved:
+                    already_resolved = True
+                elif stale_review:
+                    already_resolved = False
+                else:
+                    if cancel_all:
+                        self.answers = {}
+                    elif reviewed_answers is not None:
+                        self.answers = dict(reviewed_answers)
+                    self.resolved = True
+                    already_resolved = False
+            if stale_review:
+                await interaction.response.edit_message(
+                    content=(
+                        "Answers changed after this review opened. "
+                        "Return to the decision message and review again."
+                    ),
+                    view=None,
+                )
+                return
+            if already_resolved:
+                await interaction.response.send_message(
+                    "This decision has already been resolved.", ephemeral=True
+                )
+                return
+            payload = json.dumps({"answers": self.answers}, ensure_ascii=False)
+            gateway_resolved = False
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                gateway_resolved = resolve_gateway_clarify(self.clarify_id, payload)
+            except Exception:
+                logger.exception(
+                    "Adaptive batch resolution failed for %s", self.clarify_id
+                )
+            for child in self.children:
+                child.disabled = True
+            embed = self._current_embed()
+            if gateway_resolved:
+                embed.color = (
+                    discord.Color.greyple() if cancel_all else discord.Color.green()
+                )
+                embed.set_footer(
+                    text=(
+                        "Closed · no answers submitted"
+                        if cancel_all
+                        else f"Submitted · {len(self.answers)}/{len(self.questions)} answered"
+                    )
+                )
+            else:
+                embed.color = discord.Color.greyple()
+                embed.set_footer(text="Response was not accepted · decision is no longer active")
+            if from_private:
+                await interaction.response.edit_message(
+                    content=(
+                        "Answers submitted."
+                        if gateway_resolved
+                        else "Response was not accepted. The decision is no longer active."
+                    ),
+                    view=None,
+                )
+                if self._message:
+                    await self._message.edit(embed=embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+            self.stop()
+
+        async def on_timeout(self):
+            with self._resolution_lock:
+                if self.resolved:
+                    return
+                self.resolved = True
+            for child in self.children:
+                child.disabled = True
+            timeout_payload = json.dumps(
+                {"answers": {}, "timed_out": True}, ensure_ascii=False
+            )
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+                resolve_gateway_clarify(self.clarify_id, timeout_payload)
+            except Exception:
+                logger.exception(
+                    "Adaptive batch timeout resolution failed for %s",
+                    self.clarify_id,
+                )
+            if not self._message:
+                return
+            try:
+                embed = self._current_embed()
+                embed.color = discord.Color.greyple()
+                embed.set_footer(text="Expired · answers were not submitted")
+                await self._message.edit(embed=embed, view=self)
+            except Exception:
+                logger.debug("Unable to expire adaptive batch", exc_info=True)
 
     class ClarifyChoiceView(discord.ui.View):
         """Interactive button view for the clarify tool's multiple-choice prompts.
