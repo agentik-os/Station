@@ -12133,7 +12133,10 @@ def _define_discord_view_classes() -> None:
             values = getattr(interaction.data, "values", None)
             if values is None and isinstance(interaction.data, dict):
                 values = interaction.data.get("values")
-            if self.ALL_OPTIONS_VALUE in (values or ()):
+            if (
+                self.ALL_OPTIONS_VALUE in (values or ())
+                and self.OTHER_VALUE not in (values or ())
+            ):
                 values = (self.ALL_OPTIONS_VALUE,)
             selected_values = normalize_selected_choice_ids(self.request, values or ())
             self.selected_values = selected_values
@@ -12149,6 +12152,66 @@ def _define_discord_view_classes() -> None:
             ) or "No additional context is available."
             await interaction.response.send_message(
                 truncate_station_text(detail, 1900), ephemeral=True
+            )
+
+        async def _send_scope_confirmation(
+            self,
+            interaction: "discord.Interaction",
+            reviewed_value: Any,
+            reviewed_selection: tuple[str, ...],
+        ) -> None:
+            confirmation = render_exact_scope_confirmation(
+                self.request, selected_value=reviewed_value
+            )
+            parent = self
+
+            class ScopeConfirmationView(discord.ui.View):
+                def __init__(scope_self):
+                    super().__init__(timeout=120)
+                    scope_self.reviewed_value = reviewed_value
+                    scope_self.reviewed_selection = reviewed_selection
+                    approve = discord.ui.Button(
+                        label="Approve exact scope",
+                        style=discord.ButtonStyle.danger,
+                        custom_id=confirmation.confirm_custom_id,
+                    )
+                    approve.callback = scope_self._approve
+                    scope_self.add_item(approve)
+                    cancel = discord.ui.Button(
+                        label="Cancel",
+                        style=discord.ButtonStyle.secondary,
+                        custom_id=confirmation.cancel_custom_id,
+                    )
+                    cancel.callback = scope_self._cancel
+                    scope_self.add_item(cancel)
+
+                async def _approve(scope_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    if tuple(parent.selected_values) != scope_self.reviewed_selection:
+                        await submitted.response.send_message(
+                            "Selection changed after this confirmation opened. "
+                            "Close it and confirm the current selection.",
+                            ephemeral=True,
+                        )
+                        return
+                    await parent._resolve(
+                        submitted, scope_self.reviewed_value, from_private=True
+                    )
+
+                async def _cancel(scope_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    for child in scope_self.children:
+                        child.disabled = True
+                    await parent._cancel(submitted, from_private=True)
+
+            await interaction.response.send_message(
+                confirmation.body,
+                view=ScopeConfirmationView(),
+                ephemeral=True,
             )
 
         async def _on_primary(self, interaction: "discord.Interaction") -> None:
@@ -12182,70 +12245,33 @@ def _define_discord_view_classes() -> None:
                         if not parent._check_auth(submitted):
                             await parent._deny(submitted)
                             return
-                        await parent._resolve(
-                            submitted, str(modal_self.response.value), from_private=True
-                        )
+                        custom_value = str(modal_self.response.value)
+                        if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
+                            await parent._send_scope_confirmation(
+                                submitted,
+                                [custom_value] if parent.request.multi_select else custom_value,
+                                tuple(parent.selected_values),
+                            )
+                        else:
+                            await parent._resolve(
+                                submitted, custom_value, from_private=True
+                            )
 
                 await interaction.response.send_modal(DecisionTextModal())
                 return
             if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
-                reviewed_value = self.selected_value
+                reviewed_value = (
+                    list(self.selected_values)
+                    if self.request.multi_select
+                    else self.selected_value
+                )
                 if not reviewed_value:
                     await interaction.response.send_message(
                         "Choose an option before opening confirmation.", ephemeral=True
                     )
                     return
-                confirmation = render_exact_scope_confirmation(
-                    self.request, selected_value=reviewed_value
-                )
-                parent = self
-
-                class ScopeConfirmationView(discord.ui.View):
-                    def __init__(scope_self):
-                        super().__init__(timeout=120)
-                        scope_self.reviewed_value = reviewed_value
-                        approve = discord.ui.Button(
-                            label="Approve exact scope",
-                            style=discord.ButtonStyle.danger,
-                            custom_id=confirmation.confirm_custom_id,
-                        )
-                        approve.callback = scope_self._approve
-                        scope_self.add_item(approve)
-                        cancel = discord.ui.Button(
-                            label="Cancel",
-                            style=discord.ButtonStyle.secondary,
-                            custom_id=confirmation.cancel_custom_id,
-                        )
-                        cancel.callback = scope_self._cancel
-                        scope_self.add_item(cancel)
-
-                    async def _approve(scope_self, submitted):
-                        if not parent._check_auth(submitted):
-                            await parent._deny(submitted)
-                            return
-                        if parent.selected_value != scope_self.reviewed_value:
-                            await submitted.response.send_message(
-                                "Selection changed after this confirmation opened. "
-                                "Close it and confirm the current selection.",
-                                ephemeral=True,
-                            )
-                            return
-                        await parent._resolve(
-                            submitted, scope_self.reviewed_value, from_private=True
-                        )
-
-                    async def _cancel(scope_self, submitted):
-                        if not parent._check_auth(submitted):
-                            await parent._deny(submitted)
-                            return
-                        for child in scope_self.children:
-                            child.disabled = True
-                        await parent._cancel(submitted, from_private=True)
-
-                await interaction.response.send_message(
-                    confirmation.body,
-                    view=ScopeConfirmationView(),
-                    ephemeral=True,
+                await self._send_scope_confirmation(
+                    interaction, reviewed_value, tuple(self.selected_values)
                 )
                 return
             if not self.selected_values:

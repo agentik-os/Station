@@ -125,11 +125,13 @@ def test_adaptive_view_snapshots_confirmation_and_bounds_every_status_path():
         source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
     ]
 
-    assert "reviewed_value = self.selected_value" in view
+    assert "list(self.selected_values)" in view
     assert "selected_value=reviewed_value" in view
-    assert "parent.selected_value != scope_self.reviewed_value" in view
+    assert "tuple(parent.selected_values) != scope_self.reviewed_selection" in view
     assert "Selection changed after this confirmation opened" in view
     assert "scope_self.reviewed_value" in view
+    assert "parent._send_scope_confirmation(" in view
+    assert "[custom_value] if parent.request.multi_select else custom_value" in view
     assert "detail[:1900]" not in view
     assert "truncate_station_text(detail, 1900)" in view
     assert "append_station_status(" in view

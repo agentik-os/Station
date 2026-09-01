@@ -572,19 +572,35 @@ def render_open_text_modal(
 
 
 def render_exact_scope_confirmation(
-    request: DecisionRequest, *, selected_value: str
+    request: DecisionRequest, *, selected_value: object
 ) -> RenderedScopeConfirmation:
     """Render the private second stage required by risk and approval decisions."""
     kind = select_surface_kind(request)
     if kind not in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
         raise ValueError("exact-scope confirmation requires a risk or approval decision")
-    selected_label = next(
-        (
-            sanitize_visible_text(choice.label)
-            for choice in request.choices
-            if choice.id == selected_value
-        ),
-        sanitize_visible_text(selected_value),
+    raw_values = (
+        list(selected_value)
+        if isinstance(selected_value, (list, tuple))
+        else [selected_value]
+    )
+    labels = []
+    for raw_value in raw_values:
+        value = str(raw_value or "")
+        labels.append(
+            next(
+                (
+                    sanitize_visible_text(choice.label)
+                    for choice in request.choices
+                    if choice.id == value
+                ),
+                sanitize_visible_text(value),
+            )
+        )
+    visible_labels = [label for label in labels if label]
+    selected_label = (
+        visible_labels[0]
+        if len(visible_labels) == 1
+        else "\n".join(f"- {label}" for label in visible_labels)
     )
     body = "\n\n".join(
         (
@@ -645,7 +661,7 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
         "Change" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "Decision"
     )
     visible_decision = sanitize_visible_text(request.decision)
-    title_key = sanitize_visible_text(request.title).rstrip(" \t\r\n?!.,:;").casefold()
+    title_key = _compact_title(request.title).rstrip(" \t\r\n?!.,:;").casefold()
     decision_key = visible_decision.rstrip(" \t\r\n?!.,:;").casefold()
     if decision_key != title_key:
         blocks.append(_section(decision_heading, visible_decision))

@@ -299,6 +299,39 @@ def test_visible_hierarchy_uses_bold_compact_title_and_section_labels():
     ]
 
 
+def test_compact_title_is_not_repeated_as_the_decision_body():
+    m = load()
+    request = simple_request(
+        m,
+        title="Choose release. Additional explanatory sentence.",
+        decision="Choose release.",
+    )
+
+    rendered = m.render_decision_content(request)
+    assert rendered.count("Choose release.") == 1
+
+
+def test_exact_scope_confirmation_lists_every_multi_selected_action():
+    m = load()
+    request = simple_request(
+        m,
+        kind=m.SurfaceKind.APPROVAL,
+        multi_select=True,
+        context="A bounded approval is required.",
+        established=("The candidate passed tests.",),
+        risk="The selected actions will be authorized.",
+        includes=("Selected actions",),
+        excludes=("Everything else",),
+        rollback="Cancel before execution.",
+    )
+
+    confirmation = m.render_exact_scope_confirmation(
+        request, selected_value=["stable", "hold"]
+    )
+    assert "- Stable" in confirmation.body
+    assert "- Hold" in confirmation.body
+
+
 def test_lifecycle_rechecks_full_authorization_and_resolves_atomically():
     m = load()
     request = simple_request(m, expires_at=datetime(2026, 8, 31, 18, 0, tzinfo=timezone.utc))
