@@ -111,7 +111,7 @@ def test_risk_surface_shows_scope_rollback_and_exact_scope_confirmation():
     )
 
     rendered = m.render_decision_surface(request)
-    confirmation = m.render_exact_scope_confirmation(request)
+    confirmation = m.render_exact_scope_confirmation(request, selected_value="stable")
 
     assert rendered.semantic_color == "warning"
     for text in (
@@ -414,6 +414,58 @@ def test_invalid_optional_kind_and_expiry_degrade_safely():
 
     assert request.kind is m.SurfaceKind.SIMPLE
     assert request.expires_at is None
+
+
+@pytest.mark.parametrize("explicit_kind", ("complex", "risk", "approval"))
+def test_incomplete_explicit_kind_degrades_to_safe_simple(explicit_kind):
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose release",
+        choices=("Stable", "Hold"),
+        clarify_id=f"clarify-partial-{explicit_kind}",
+        source_session="discord:operator:partial-kind",
+        surface={"kind": explicit_kind, "title": "Partial"},
+    )
+
+    assert request.kind is m.SurfaceKind.SIMPLE
+
+
+def test_legacy_question_appears_once_in_final_visible_content():
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose release",
+        choices=("Stable", "Hold"),
+        clarify_id="clarify-no-duplicate",
+        source_session="discord:operator:no-duplicate",
+        surface=None,
+    )
+
+    assert m.render_decision_content(request).count("Choose release") == 1
+
+
+def test_embed_fields_and_scope_confirmation_are_utf16_bounded():
+    m = load()
+    request = simple_request(
+        m,
+        kind=m.SurfaceKind.APPROVAL,
+        title="🚀" * 400,
+        context="Context",
+        established=("Verified",),
+        risk="Risk " + "⚠️" * 1000,
+        includes=("Include " + "😀" * 1000,),
+        excludes=("Exclude " + "😀" * 1000,),
+        rollback="Rollback " + "😀" * 1000,
+    )
+
+    embed = m.build_decision_embed(request)
+    confirmation = m.render_exact_scope_confirmation(
+        request, selected_value="stable"
+    )
+
+    assert m.utf16_len(embed.title) <= 256
+    assert m.utf16_len(embed.description) <= 4096
+    assert m.utf16_len(confirmation.body) <= 1900
+    assert "ACTION\nStable" in confirmation.body
 
 
 def test_detail_truncation_never_exceeds_utf16_limit():

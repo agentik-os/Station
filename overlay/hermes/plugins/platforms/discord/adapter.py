@@ -37,9 +37,19 @@ from agent.async_utils import (
 )
 from agent.display import ToolPreview
 try:
+    from .agk_message_format import (
+        append_station_status,
+        normalize_station_reply,
+        truncate_station_text,
+    )
     from .notification_policy import DiscordNotificationPolicy, NotificationAction
     from .status_surfaces import StatusKind, render_status
 except ImportError:
+    from agk_message_format import (
+        append_station_status,
+        normalize_station_reply,
+        truncate_station_text,
+    )
     from notification_policy import DiscordNotificationPolicy, NotificationAction
     from status_surfaces import StatusKind, render_status
 
@@ -1178,6 +1188,10 @@ class DiscordAdapter(BasePlatformAdapter):
     _SPLIT_THRESHOLD = 1900  # near the 2000-char split point
     supports_code_blocks = True  # Discord markdown renders fenced code blocks natively
     splits_long_messages = True  # send() chunks via truncate_message(MAX_MESSAGE_LENGTH)
+
+    def _format_station_message(self, content: str) -> str:
+        """Normalize Station reply styling before standard Discord formatting."""
+        return self.format_message(normalize_station_reply(content))
     # Safety ceiling on split deliveries (#86581): a degenerate turn can
     # produce tens of thousands of characters — without a cap the adapter
     # posts every 2000-char chunk back-to-back and floods the channel (the
@@ -1250,6 +1264,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # Canonical adaptive decision messages, isolated to this profile adapter.
         # Retries resolve by channel + stable decision_id and edit in place.
         self._decision_message_ids: Dict[Tuple[str, str, str], str] = {}
+        self._decision_send_locks: Dict[Tuple[str, str, str], asyncio.Lock] = {}
         # Voice channel state (per-guild)
         self._voice_clients: Dict[int, Any] = {}  # guild_id -> VoiceClient
         self._voice_locks: Dict[int, asyncio.Lock] = {}  # guild_id -> serialize join/leave
@@ -4049,7 +4064,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 return result
 
             # Format and split message if needed
-            formatted = self.format_message(content)
+            formatted = self._format_station_message(content)
             full_chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
 
             # A long code block or Markdown section is technically splittable,
@@ -4199,7 +4214,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # _derive_forum_thread_name is defined further down in this same
         # module — no cross-module import needed.
 
-        formatted = self.format_message(content)
+        formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
             self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
         )
@@ -4362,7 +4377,7 @@ class DiscordAdapter(BasePlatformAdapter):
             if not channel:
                 channel = await self._client.fetch_channel(int(chat_id))
             msg = channel.get_partial_message(int(message_id))
-            formatted = self.format_message(content)
+            formatted = self._format_station_message(content)
 
             _preview_key = (str(chat_id), str(message_id))
             _saturated_preview = False
@@ -4572,7 +4587,7 @@ class DiscordAdapter(BasePlatformAdapter):
         saw would be the worse outcome.  Only a first-chunk edit failure
         returns ``success=False`` (a real adapter problem, not overflow).
         """
-        formatted = self.format_message(content)
+        formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
             self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
         )
@@ -4679,10 +4694,12 @@ class DiscordAdapter(BasePlatformAdapter):
             metadata_lines.append(f"Type: {content_type}")
         if size_bytes is not None:
             metadata_lines.append(f"Size: {size_bytes} bytes")
-        body_parts = [str(caption or "").strip()]
+        body_parts = [normalize_station_reply(str(caption or "").strip())]
         if gallery_captions:
             body_parts.extend(
-                str(value).strip() for value in gallery_captions if str(value).strip()
+                normalize_station_reply(str(value).strip())
+                for value in gallery_captions
+                if str(value).strip()
             )
         body = "\n".join(part for part in body_parts if part)
         metadata_block = "\n".join(metadata_lines)
@@ -9185,18 +9202,22 @@ class DiscordAdapter(BasePlatformAdapter):
                 str(request.source_session),
                 request.decision_id,
             )
-            existing_message_id = (
-                metadata.get("decision_message_id") if metadata else None
-            ) or self._decision_message_ids.get(decision_key)
-            if existing_message_id:
-                try:
-                    message = await channel.fetch_message(int(existing_message_id))
-                    await message.edit(**kwargs)
-                except discord.NotFound:
+            decision_lock = self._decision_send_locks.setdefault(
+                decision_key, asyncio.Lock()
+            )
+            async with decision_lock:
+                existing_message_id = (
+                    metadata.get("decision_message_id") if metadata else None
+                ) or self._decision_message_ids.get(decision_key)
+                if existing_message_id:
+                    try:
+                        message = await channel.fetch_message(int(existing_message_id))
+                        await message.edit(**kwargs)
+                    except discord.NotFound:
+                        message = await channel.send(**kwargs)
+                else:
                     message = await channel.send(**kwargs)
-            else:
-                message = await channel.send(**kwargs)
-            self._decision_message_ids[decision_key] = str(message.id)
+                self._decision_message_ids[decision_key] = str(message.id)
             if view is not None:
                 view._message = message
             return SendResult(success=True, message_id=str(message.id))
@@ -12108,7 +12129,9 @@ def _define_discord_view_classes() -> None:
             detail = sanitize_visible_text(
                 self.request.context_detail or self.request.context
             ) or "No additional context is available."
-            await interaction.response.send_message(detail[:1900], ephemeral=True)
+            await interaction.response.send_message(
+                truncate_station_text(detail, 1900), ephemeral=True
+            )
 
         async def _on_primary(self, interaction: "discord.Interaction") -> None:
             if not self._check_auth(interaction):
@@ -12145,12 +12168,21 @@ def _define_discord_view_classes() -> None:
                 await interaction.response.send_modal(DecisionTextModal())
                 return
             if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
-                confirmation = render_exact_scope_confirmation(self.request)
+                reviewed_value = self.selected_value
+                if not reviewed_value:
+                    await interaction.response.send_message(
+                        "Choose an option before opening confirmation.", ephemeral=True
+                    )
+                    return
+                confirmation = render_exact_scope_confirmation(
+                    self.request, selected_value=reviewed_value
+                )
                 parent = self
 
                 class ScopeConfirmationView(discord.ui.View):
                     def __init__(scope_self):
                         super().__init__(timeout=120)
+                        scope_self.reviewed_value = reviewed_value
                         approve = discord.ui.Button(
                             label="Approve exact scope",
                             style=discord.ButtonStyle.danger,
@@ -12170,13 +12202,15 @@ def _define_discord_view_classes() -> None:
                         if not parent._check_auth(submitted):
                             await parent._deny(submitted)
                             return
-                        if not parent.selected_value:
+                        if parent.selected_value != scope_self.reviewed_value:
                             await submitted.response.send_message(
-                                "Choose an option on the decision first.", ephemeral=True
+                                "Selection changed after this confirmation opened. "
+                                "Close it and confirm the current selection.",
+                                ephemeral=True,
                             )
                             return
                         await parent._resolve(
-                            submitted, parent.selected_value, from_private=True
+                            submitted, scope_self.reviewed_value, from_private=True
                         )
 
                     async def _cancel(scope_self, submitted):
@@ -12261,10 +12295,15 @@ def _define_discord_view_classes() -> None:
             embeds = getattr(message, "embeds", ()) or ()
             embed = embeds[0] if embeds else None
             if content:
-                content += (
-                    f"\n\nRESOLVED\nSelected: {sanitize_visible_text(resolved_value)}"
-                    if gateway_resolved
-                    else "\n\nUNAVAILABLE\nResponse was not accepted; this decision is no longer active."
+                content = append_station_status(
+                    content,
+                    "RESOLVED" if gateway_resolved else "UNAVAILABLE",
+                    (
+                        f"Selected: {sanitize_visible_text(resolved_value)}"
+                        if gateway_resolved
+                        else "Response was not accepted; this decision is no longer active."
+                    ),
+                    limit=2000,
                 )
             if embed:
                 embed.color = (
@@ -12274,7 +12313,7 @@ def _define_discord_view_classes() -> None:
                 )
                 embed.set_footer(
                     text=(
-                        f"Resolved — {resolved_value}"
+                        truncate_station_text(f"Resolved — {resolved_value}", 2048)
                         if gateway_resolved
                         else "Response was not accepted · decision is no longer active"
                     )
@@ -12282,7 +12321,7 @@ def _define_discord_view_classes() -> None:
             if from_private:
                 private_status = (
                     (
-                        "Cancelled. The safe default was applied."
+                        "Cancelled. No action was applied by this confirmation."
                         if resolved_value.startswith("Cancelled —")
                         else "Approved. The canonical decision is resolved."
                     )
@@ -12322,9 +12361,16 @@ def _define_discord_view_classes() -> None:
                 content = getattr(message, "content", None)
                 embeds = getattr(message, "embeds", ()) or ()
                 embed = embeds[0] if embeds else None
-                expiration = f"Prompt expired — {self.request.default_action}"
+                expiration = truncate_station_text(
+                    f"Prompt expired — {self.request.default_action}", 2048
+                )
                 if content:
-                    content += f"\n\nEXPIRED\n{self.request.default_action}"
+                    content = append_station_status(
+                        content,
+                        "EXPIRED",
+                        sanitize_visible_text(self.request.default_action),
+                        limit=2000,
+                    )
                 if embed:
                     embed.color = discord.Color.greyple()
                     embed.set_footer(text=expiration)

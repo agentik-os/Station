@@ -236,6 +236,12 @@ def decision_request_from_clarify(
         explicit_kind = SurfaceKind(raw_kind) if raw_kind else None
     except (TypeError, ValueError):
         explicit_kind = None
+    if explicit_kind is SurfaceKind.COMPLEX and not has_complete_complex_contract:
+        explicit_kind = None
+    if explicit_kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} and not has_complete_risk_contract:
+        explicit_kind = None
+    if explicit_kind is SurfaceKind.BATCH:
+        explicit_kind = None
     kind = explicit_kind or (
         SurfaceKind.RISK
         if has_complete_risk_contract
@@ -505,13 +511,24 @@ def render_open_text_modal(request: DecisionRequest) -> RenderedTextModal:
     )
 
 
-def render_exact_scope_confirmation(request: DecisionRequest) -> RenderedScopeConfirmation:
+def render_exact_scope_confirmation(
+    request: DecisionRequest, *, selected_value: str
+) -> RenderedScopeConfirmation:
     """Render the private second stage required by risk and approval decisions."""
     kind = select_surface_kind(request)
     if kind not in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
         raise ValueError("exact-scope confirmation requires a risk or approval decision")
+    selected_label = next(
+        (
+            sanitize_visible_text(choice.label)
+            for choice in request.choices
+            if choice.id == selected_value
+        ),
+        sanitize_visible_text(selected_value),
+    )
     body = "\n\n".join(
         (
+            "ACTION\n" + selected_label,
             "INCLUDES\n" + "\n".join(_list_lines(request.includes)),
             "EXCLUDES\n" + "\n".join(_list_lines(request.excludes)),
             "Confirm this exact scope. No other profile or target is authorized.",
@@ -519,7 +536,7 @@ def render_exact_scope_confirmation(request: DecisionRequest) -> RenderedScopeCo
     )
     prefix = f"decision:{request.decision_id}"
     return RenderedScopeConfirmation(
-        body=body,
+        body=_truncate_utf16(body, 1900),
         ephemeral=True,
         confirm_custom_id=f"{prefix}:approve",
         cancel_custom_id=f"{prefix}:cancel",
@@ -567,7 +584,9 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
     decision_heading = (
         "CHANGE" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "DECISION"
     )
-    blocks.append(f"{decision_heading}\n{sanitize_visible_text(request.decision)}")
+    visible_decision = sanitize_visible_text(request.decision)
+    if visible_decision.casefold() != sanitize_visible_text(request.title).casefold():
+        blocks.append(f"{decision_heading}\n{visible_decision}")
     if kind is not SurfaceKind.SIMPLE:
         recommendation = sanitize_visible_text(request.recommendation)
         if recommendation:
@@ -625,7 +644,7 @@ def build_decision_embed(request: DecisionRequest, limit: int = 4096) -> Rendere
     kind = select_surface_kind(request)
     semantic_color = "warning" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "neutral"
     return RenderedDecisionEmbed(
-        title=sanitize_visible_text(request.title),
+        title=_truncate_utf16(sanitize_visible_text(request.title), 256),
         description=remainder if separator else rendered,
         semantic_color=semantic_color,
     )

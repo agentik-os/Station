@@ -53,6 +53,8 @@ def test_send_decision_edits_existing_canonical_message_on_retry():
     assert "message.edit(**kwargs)" in decision
     assert "channel.send(**kwargs)" in decision
     assert "except discord.NotFound:" in decision
+    assert "self._decision_send_locks" in decision
+    assert "async with decision_lock:" in decision
 
 
 def test_open_text_plain_modal_and_cancel_paths_do_not_race_or_block():
@@ -81,6 +83,25 @@ def test_adaptive_view_reports_success_only_after_gateway_acceptance():
     assert "gateway_resolved = resolve_gateway_clarify(" in view
     assert "if gateway_resolved" in view
     assert "Response was not accepted" in view
+
+
+def test_adaptive_view_snapshots_confirmation_and_bounds_every_status_path():
+    source = ADAPTER.read_text()
+    view = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+
+    assert "reviewed_value = self.selected_value" in view
+    assert "selected_value=reviewed_value" in view
+    assert "parent.selected_value != scope_self.reviewed_value" in view
+    assert "Selection changed after this confirmation opened" in view
+    assert "scope_self.reviewed_value" in view
+    assert "detail[:1900]" not in view
+    assert "truncate_station_text(detail, 1900)" in view
+    assert "append_station_status(" in view
+    assert "Cancelled. No action was applied by this confirmation." in view
+    assert "safe default was applied" not in view
 
 
 def test_adaptive_view_timeout_unblocks_the_gateway_with_the_safe_default():
