@@ -6269,6 +6269,7 @@ class TurnRunner:
                 **({"decision_surface": surface_payload} if surface_payload else {}),
                 "source_session": ctx.session_key or "",
                 "decision_user_id": str(ctx.source.user_id),
+                "multi_select": bool(multi_select),
             }
             send_coro = (
                 getattr(ctx._status_adapter, "send_clarify_batch")(

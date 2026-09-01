@@ -264,6 +264,7 @@ try:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
         render_open_text_modal,
@@ -280,6 +281,7 @@ except ImportError:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
         render_open_text_modal,
@@ -9446,6 +9448,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 clarify_id=clarify_id,
                 source_session=session_key,
                 surface=surface if isinstance(surface, dict) else None,
+                multi_select=bool((metadata or {}).get("multi_select")),
             )
             target_id = (
                 metadata.get("thread_id")
@@ -12003,6 +12006,9 @@ def _define_discord_view_classes() -> None:
     class AdaptiveDecisionView(discord.ui.View):
         """Canonical adaptive clarify controls with one-message lifecycle."""
 
+        ALL_OPTIONS_VALUE = "__all__"
+        OTHER_VALUE = "__other__"
+
         def __init__(
             self,
             *,
@@ -12026,6 +12032,7 @@ def _define_discord_view_classes() -> None:
             self.profile_id = str(profile_id)
             self.responder_user_id = str(responder_user_id)
             self.selected_value: Optional[str] = None
+            self.selected_values: list[str] = []
             self.resolved = False
             self._resolution_lock = threading.Lock()
             self._message = None
@@ -12047,10 +12054,14 @@ def _define_discord_view_classes() -> None:
                         for option in spec.options
                     ]
                     select = discord.ui.Select(
-                        placeholder="Choose one…",
+                        placeholder=(
+                            "Choose one or more…"
+                            if self.request.multi_select
+                            else spec.placeholder or "Choose one…"
+                        ),
                         options=options,
-                        min_values=1,
-                        max_values=1,
+                        min_values=spec.min_values,
+                        max_values=len(options) if self.request.multi_select else spec.max_values,
                         custom_id=spec.custom_id,
                     )
                     select.callback = self._on_select
@@ -12122,7 +12133,11 @@ def _define_discord_view_classes() -> None:
             values = getattr(interaction.data, "values", None)
             if values is None and isinstance(interaction.data, dict):
                 values = interaction.data.get("values")
-            self.selected_value = str((values or [""])[0])
+            if self.ALL_OPTIONS_VALUE in (values or ()):
+                values = (self.ALL_OPTIONS_VALUE,)
+            selected_values = normalize_selected_choice_ids(self.request, values or ())
+            self.selected_values = selected_values
+            self.selected_value = selected_values[0] if selected_values else None
             await interaction.response.defer()
 
         async def _on_context(self, interaction: "discord.Interaction") -> None:
@@ -12141,8 +12156,11 @@ def _define_discord_view_classes() -> None:
                 await self._deny(interaction)
                 return
             kind = select_surface_kind(self.request)
-            if kind is SurfaceKind.OPEN_TEXT:
-                modal_spec = render_open_text_modal(self.request)
+            if kind is SurfaceKind.OPEN_TEXT or self.OTHER_VALUE in self.selected_values:
+                modal_spec = render_open_text_modal(
+                    self.request,
+                    allow_choice_other=self.OTHER_VALUE in self.selected_values,
+                )
                 parent = self
 
                 class DecisionTextModal(discord.ui.Modal):
@@ -12230,12 +12248,15 @@ def _define_discord_view_classes() -> None:
                     ephemeral=True,
                 )
                 return
-            if not self.selected_value:
+            if not self.selected_values:
                 await interaction.response.send_message(
                     "Choose an option before continuing.", ephemeral=True
                 )
                 return
-            await self._resolve(interaction, self.selected_value)
+            await self._resolve(
+                interaction,
+                self.selected_values if self.request.multi_select else self.selected_value,
+            )
 
         async def _on_close(self, interaction: "discord.Interaction") -> None:
             await self._cancel(interaction)
@@ -12259,10 +12280,20 @@ def _define_discord_view_classes() -> None:
                     return choice.label
             return selected
 
+        def _gateway_values(self, selected: Any) -> str:
+            if not self.request.multi_select:
+                return self._gateway_value(str(selected or ""))
+            resolved_values = [
+                self._gateway_value(str(value))
+                for value in (selected if isinstance(selected, (list, tuple)) else [selected])
+                if str(value or "")
+            ]
+            return json.dumps(resolved_values, ensure_ascii=False)
+
         async def _resolve(
             self,
             interaction: "discord.Interaction",
-            selected: str,
+            selected: Any,
             *,
             from_private: bool = False,
         ) -> None:
@@ -12280,7 +12311,7 @@ def _define_discord_view_classes() -> None:
                     "This decision has already been resolved.", ephemeral=True
                 )
                 return
-            resolved_value = self._gateway_value(selected)
+            resolved_value = self._gateway_values(selected)
             gateway_resolved = False
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
@@ -12335,10 +12366,10 @@ def _define_discord_view_classes() -> None:
                     content=private_status, view=None
                 )
                 if message:
-                    await message.edit(content=content, embed=embed, view=self)
+                    await message.edit(content=content, embed=embed, view=None)
             else:
                 await interaction.response.edit_message(
-                    content=content, embed=embed, view=self
+                    content=content, embed=embed, view=None
                 )
 
         async def on_timeout(self):
@@ -12364,20 +12395,18 @@ def _define_discord_view_classes() -> None:
                 content = getattr(message, "content", None)
                 embeds = getattr(message, "embeds", ()) or ()
                 embed = embeds[0] if embeds else None
-                expiration = truncate_station_text(
-                    f"Prompt expired — {self.request.default_action}", 2048
-                )
+                expiration = "Expired — no response received; no action was taken."
                 if content:
                     content = append_station_status(
                         content,
-                        "EXPIRED",
-                        sanitize_visible_text(self.request.default_action),
+                        "Expired",
+                        "No response received; no action was taken.",
                         limit=2000,
                     )
                 if embed:
                     embed.color = discord.Color.greyple()
                     embed.set_footer(text=expiration)
-                await message.edit(content=content, embed=embed, view=self)
+                await message.edit(content=content, embed=embed, view=None)
             except Exception:
                 logger.debug("Unable to expire adaptive decision", exc_info=True)
 
