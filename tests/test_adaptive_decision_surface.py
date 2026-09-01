@@ -246,6 +246,7 @@ def test_selection_normalization_supports_all_other_and_ordered_deduplication():
     assert m.normalize_selected_choice_ids(request, ["__all__"]) == ["stable", "hold"]
     assert m.normalize_selected_choice_ids(request, ["hold", "stable", "hold"]) == ["stable", "hold"]
     assert m.normalize_selected_choice_ids(request, ["__other__", "stable"]) == ["__other__"]
+    assert m.normalize_selected_choice_ids(request, ["__all__", "__other__"]) == ["__other__"]
 
 
 def test_select_blueprints_reserve_discord_option_slots_for_all_and_other():
