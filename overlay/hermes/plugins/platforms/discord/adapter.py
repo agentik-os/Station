@@ -4065,7 +4065,9 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Format and split message if needed
             formatted = self._format_station_message(content)
-            full_chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            full_chunks = self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
 
             # A long code block or Markdown section is technically splittable,
             # but ceases to be a coherent result. In that case keep the public
@@ -4216,7 +4218,9 @@ class DiscordAdapter(BasePlatformAdapter):
 
         formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
-            self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
         )
 
         thread_name = _derive_forum_thread_name(content)
@@ -4388,10 +4392,10 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Pre-flight: oversized payload.  Final edits split-and-deliver;
             # streaming edits truncate a one-message preview in place.
-            if len(formatted) > self.MAX_MESSAGE_LENGTH:
+            if utf16_len(formatted) > self.MAX_MESSAGE_LENGTH:
                 if finalize:
                     full_chunks = self.truncate_message(
-                        formatted, self.MAX_MESSAGE_LENGTH,
+                        formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                     )
                     if self._needs_long_reply_artifact(formatted, full_chunks):
                         await self._edit_long_reply_artifact(
@@ -4408,7 +4412,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         channel, msg, message_id, content,
                     )
                 formatted = self.truncate_message(
-                    formatted, self.MAX_MESSAGE_LENGTH,
+                    formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                 )[0]
                 _saturated_preview = True
                 # Saturated-preview dedup: past the cap, every progressive
@@ -4440,7 +4444,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         )
                     # Mid-stream: truncate and retry in place (no split).
                     truncated = self.truncate_message(
-                        formatted, self.MAX_MESSAGE_LENGTH,
+                        formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len,
                     )[0]
                     if self._last_overflow_preview.get(_preview_key) == truncated:
                         # Saturated-preview dedup (see pre-flight path above).
@@ -4589,7 +4593,9 @@ class DiscordAdapter(BasePlatformAdapter):
         """
         formatted = self._format_station_message(content)
         chunks = self._cap_split_chunks(
-            self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+            self.truncate_message(
+                formatted, self.MAX_MESSAGE_LENGTH, len_fn=utf16_len
+            )
         )
         if len(chunks) <= 1:
             # Defensive: caller's pre-flight should guarantee >1 chunk, but if
@@ -9206,9 +9212,9 @@ class DiscordAdapter(BasePlatformAdapter):
                 decision_key, asyncio.Lock()
             )
             async with decision_lock:
-                existing_message_id = (
+                existing_message_id = self._decision_message_ids.get(decision_key) or (
                     metadata.get("decision_message_id") if metadata else None
-                ) or self._decision_message_ids.get(decision_key)
+                )
                 if existing_message_id:
                     try:
                         message = await channel.fetch_message(int(existing_message_id))
@@ -9329,8 +9335,9 @@ class DiscordAdapter(BasePlatformAdapter):
                 # preview for clients that do not expose embed text to assistive
                 # notifications. The embed remains the sole decision/control
                 # surface; this line only identifies what needs attention.
-                send_kwargs["content"] = (
-                    f"{mention_content}\n{sanitize_visible_text(command)}"
+                send_kwargs["content"] = truncate_station_text(
+                    f"{mention_content}\n{sanitize_visible_text(command)}",
+                    self.MAX_MESSAGE_LENGTH,
                 )
                 allowed_mentions_cls = getattr(discord, "AllowedMentions", None)
                 if allowed_mentions_cls is not None:

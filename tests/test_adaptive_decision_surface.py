@@ -430,6 +430,23 @@ def test_incomplete_explicit_kind_degrades_to_safe_simple(explicit_kind):
     assert request.kind is m.SurfaceKind.SIMPLE
 
 
+def test_incomplete_explicit_risk_does_not_reinfer_complex_from_context_only():
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose release",
+        choices=("Stable", "Hold"),
+        clarify_id="clarify-partial-risk-context",
+        source_session="discord:operator:partial-risk-context",
+        surface={
+            "kind": "risk",
+            "context": "Release context exists.",
+            "established": ["Tests passed."],
+        },
+    )
+
+    assert request.kind is m.SurfaceKind.SIMPLE
+
+
 def test_legacy_question_appears_once_in_final_visible_content():
     m = load()
     request = m.decision_request_from_clarify(
@@ -438,6 +455,19 @@ def test_legacy_question_appears_once_in_final_visible_content():
         clarify_id="clarify-no-duplicate",
         source_session="discord:operator:no-duplicate",
         surface=None,
+    )
+
+    assert m.render_decision_content(request).count("Choose release") == 1
+
+
+def test_question_is_not_duplicated_for_trailing_punctuation_difference():
+    m = load()
+    request = m.decision_request_from_clarify(
+        question="Choose release",
+        choices=("Stable", "Hold"),
+        clarify_id="clarify-punctuation",
+        source_session="discord:operator:punctuation",
+        surface={"title": "Choose release?"},
     )
 
     assert m.render_decision_content(request).count("Choose release") == 1

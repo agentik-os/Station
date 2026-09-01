@@ -55,6 +55,9 @@ def test_send_decision_edits_existing_canonical_message_on_retry():
     assert "except discord.NotFound:" in decision
     assert "self._decision_send_locks" in decision
     assert "async with decision_lock:" in decision
+    assert decision.index("self._decision_message_ids.get(decision_key)") < decision.index(
+        'metadata.get("decision_message_id")'
+    )
 
 
 def test_open_text_plain_modal_and_cancel_paths_do_not_race_or_block():
@@ -102,6 +105,16 @@ def test_adaptive_view_snapshots_confirmation_and_bounds_every_status_path():
     assert "append_station_status(" in view
     assert "Cancelled. No action was applied by this confirmation." in view
     assert "safe default was applied" not in view
+
+
+def test_conversational_and_approval_paths_use_utf16_budgets():
+    source = ADAPTER.read_text()
+
+    assert "if utf16_len(formatted) > self.MAX_MESSAGE_LENGTH:" in source
+    assert source.count("len_fn=utf16_len") >= 6
+    approval = method(source, "send_exec_approval", "send_slash_confirm")
+    assert "truncate_station_text(" in approval
+    assert "sanitize_visible_text(command)" in approval
 
 
 def test_adaptive_view_timeout_unblocks_the_gateway_with_the_safe_default():

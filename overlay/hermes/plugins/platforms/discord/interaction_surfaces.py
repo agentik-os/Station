@@ -236,13 +236,17 @@ def decision_request_from_clarify(
         explicit_kind = SurfaceKind(raw_kind) if raw_kind else None
     except (TypeError, ValueError):
         explicit_kind = None
+    degraded_explicit = False
     if explicit_kind is SurfaceKind.COMPLEX and not has_complete_complex_contract:
+        degraded_explicit = True
         explicit_kind = None
     if explicit_kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} and not has_complete_risk_contract:
+        degraded_explicit = True
         explicit_kind = None
     if explicit_kind is SurfaceKind.BATCH:
+        degraded_explicit = True
         explicit_kind = None
-    kind = explicit_kind or (
+    kind = SurfaceKind.SIMPLE if degraded_explicit else explicit_kind or (
         SurfaceKind.RISK
         if has_complete_risk_contract
         else SurfaceKind.COMPLEX
@@ -585,7 +589,9 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
         "CHANGE" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "DECISION"
     )
     visible_decision = sanitize_visible_text(request.decision)
-    if visible_decision.casefold() != sanitize_visible_text(request.title).casefold():
+    title_key = sanitize_visible_text(request.title).rstrip(" \t\r\n?!.,:;").casefold()
+    decision_key = visible_decision.rstrip(" \t\r\n?!.,:;").casefold()
+    if decision_key != title_key:
         blocks.append(f"{decision_heading}\n{visible_decision}")
     if kind is not SurfaceKind.SIMPLE:
         recommendation = sanitize_visible_text(request.recommendation)
