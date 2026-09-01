@@ -249,6 +249,18 @@ def test_selection_normalization_supports_all_other_and_ordered_deduplication():
     assert m.normalize_selected_choice_ids(request, ["__all__", "__other__"]) == ["__other__"]
 
 
+def test_discord_mapping_payload_returns_selected_values_not_dict_values_method():
+    m = load()
+
+    assert m.interaction_selected_values({"values": ["hold", "stable"]}) == (
+        "hold",
+        "stable",
+    )
+    assert m.interaction_selected_values({}) == ()
+    assert m.interaction_selected_values(None) == ()
+
+
+
 def test_select_blueprints_reserve_discord_option_slots_for_all_and_other():
     m = load()
     choices = tuple(

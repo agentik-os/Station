@@ -264,6 +264,7 @@ try:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        interaction_selected_values,
         normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
@@ -281,6 +282,7 @@ except ImportError:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        interaction_selected_values,
         normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
@@ -12130,9 +12132,7 @@ def _define_discord_view_classes() -> None:
                     "This decision is no longer active.", ephemeral=True
                 )
                 return
-            values = getattr(interaction.data, "values", None)
-            if values is None and isinstance(interaction.data, dict):
-                values = interaction.data.get("values")
+            values = interaction_selected_values(interaction.data)
             if (
                 self.ALL_OPTIONS_VALUE in (values or ())
                 and self.OTHER_VALUE not in (values or ())

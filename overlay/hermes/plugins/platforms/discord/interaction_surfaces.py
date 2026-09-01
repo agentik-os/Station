@@ -7,6 +7,7 @@ interactive controls and authorization lifecycle.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -60,6 +61,20 @@ def sanitize_visible_text(value: object) -> str:
     text = str(value or "").strip()
     text = _PRIVATE_PATH_RE.sub("[private path]", text)
     return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+
+
+def interaction_selected_values(data: object) -> tuple[str, ...]:
+    """Extract Discord select values from mapping or attribute payloads."""
+    if isinstance(data, Mapping):
+        raw_values = data.get("values")
+    else:
+        raw_values = getattr(data, "values", None)
+    if raw_values is None or isinstance(raw_values, (str, bytes)):
+        return ()
+    try:
+        return tuple(str(value) for value in raw_values if str(value))
+    except TypeError:
+        return ()
 
 
 @dataclass(frozen=True)
