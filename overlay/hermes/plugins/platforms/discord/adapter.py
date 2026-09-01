@@ -7401,10 +7401,6 @@ class DiscordAdapter(BasePlatformAdapter):
         async def slash_clear(interaction: discord.Interaction):
             await self._send_clear_confirmation_interaction(interaction)
 
-        @tree.command(name="panel", description="Open the interactive Hermes command center")
-        async def slash_panel(interaction: discord.Interaction):
-            await self._send_command_panel_interaction(interaction)
-
         @tree.command(name="settings", description="Manage provider accounts, usage, and rotation")
         async def slash_settings(interaction: discord.Interaction):
             await self._send_account_picker_interaction(interaction)
