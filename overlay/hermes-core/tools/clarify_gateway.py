@@ -513,6 +513,12 @@ def has_pending(session_key: str) -> bool:
         return any(_entries.get(cid) is not None for cid in ids)
 
 
+def pending_count() -> int:
+    """Return the number of unresolved decisions that must survive a reload."""
+    with _lock:
+        return sum(1 for entry in _entries.values() if not entry.event.is_set())
+
+
 def clear_session(session_key: str) -> int:
     """Resolve and drop every pending clarify for a session.
 
