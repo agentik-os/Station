@@ -8931,7 +8931,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             self._running_agent_count()
             + self._active_cron_job_count()
             + self._active_api_run_count()
+            + self._pending_clarify_count()
         )
+
+    def _pending_clarify_count(self) -> int:
+        """Count unresolved native decisions whose callbacks are process-local."""
+        try:
+            from tools import clarify_gateway
+            return max(0, int(clarify_gateway.pending_count()))
+        except Exception:
+            return 0
 
     def _active_cron_job_count(self) -> int:
         """Count of cron jobs currently executing, from the cron scheduler's
