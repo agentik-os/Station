@@ -115,11 +115,11 @@ def test_risk_surface_shows_scope_rollback_and_exact_scope_confirmation():
 
     assert rendered.semantic_color == "warning"
     for text in (
-        "CHANGE\nWhich release channel should receive the build?",
-        "RISK\nA restart briefly interrupts Operator replies.",
-        "INCLUDES\n- Operator profile gateway\n- One staged release pointer",
-        "EXCLUDES\n- Mission, Private, and client profiles\n- Credentials and session state",
-        "ROLLBACK\nRestore the previous release pointer and restart Operator.",
+    "**Change**\nWhich release channel should receive the build?",
+    "**Risk**\nA restart briefly interrupts Operator replies.",
+    "**Includes**\n- Operator profile gateway\n- One staged release pointer",
+    "**Excludes**\n- Mission, Private, and client profiles\n- Credentials and session state",
+    "**Rollback**\nRestore the previous release pointer and restart Operator.",
     ):
         assert text in rendered.body
     assert rendered.primary_label == "Review & approve"
@@ -157,6 +157,18 @@ def test_open_text_uses_focused_modal_without_repeating_question():
     assert modal.custom_id == "decision:release-channel:text"
 
 
+def test_other_choice_can_open_custom_answer_modal_without_weakening_default_guard():
+    m = load()
+    request = simple_request(m)
+
+    with pytest.raises(ValueError, match="open_text"):
+        m.render_open_text_modal(request)
+
+    modal = m.render_open_text_modal(request, allow_choice_other=True)
+    assert modal.title == "Write response"
+    assert modal.custom_id == "decision:release-channel:text"
+
+
 def test_batch_renders_two_to_five_independent_questions_once():
     m = load()
     first = simple_request(m, decision_id="channel")
@@ -180,8 +192,8 @@ def test_batch_renders_two_to_five_independent_questions_once():
     assert rendered.mode == "embed"
     assert rendered.body.count(first.decision) == 1
     assert rendered.body.count(second.decision) == 1
-    assert "QUESTION 1" in rendered.body
-    assert "QUESTION 2" in rendered.body
+    assert "**Question 1**" in rendered.body
+    assert "**Question 2**" in rendered.body
 
     with pytest.raises(ValueError, match="two to five"):
         simple_request(
@@ -206,10 +218,86 @@ def test_component_blueprint_uses_selects_stable_ids_and_required_controls():
     assert [(option.value, option.label, option.description) for option in select.options] == [
         ("stable", "Stable", "Move the pointer after verification"),
         ("hold", "Hold", "Leave the current release active"),
+        ("__other__", "Other", "Write a different answer"),
     ]
     assert (confirm.label, confirm.custom_id) == ("Confirm", "decision:release-channel:confirm")
     assert (context.label, context.custom_id) == ("Context", "decision:release-channel:context")
     assert (close.label, close.custom_id) == ("Close", "decision:release-channel:close")
+
+
+def test_multi_select_blueprint_supports_select_all_and_multiple_values():
+    m = load()
+    request = simple_request(m, multi_select=True)
+
+    select = m.build_component_blueprint(request)[0]
+
+    assert select.placeholder == "Choose one or more…"
+    assert select.min_values == 1
+    assert select.max_values == len(request.choices) + 2
+    assert select.options[0].value == "__all__"
+    assert select.options[0].label == "All options"
+    assert [option.value for option in select.options[1:]] == ["stable", "hold", "__other__"]
+
+
+def test_selection_normalization_supports_all_other_and_ordered_deduplication():
+    m = load()
+    request = simple_request(m, multi_select=True)
+
+    assert m.normalize_selected_choice_ids(request, ["__all__"]) == ["stable", "hold"]
+    assert m.normalize_selected_choice_ids(request, ["hold", "stable", "hold"]) == ["stable", "hold"]
+    assert m.normalize_selected_choice_ids(request, ["__other__", "stable"]) == ["__other__"]
+    assert m.normalize_selected_choice_ids(request, ["__all__", "__other__"]) == ["__other__"]
+
+
+def test_discord_mapping_payload_returns_selected_values_not_dict_values_method():
+    m = load()
+
+    assert m.interaction_selected_values({"values": ["hold", "stable"]}) == (
+        "hold",
+        "stable",
+    )
+    assert m.interaction_selected_values({}) == ()
+    assert m.interaction_selected_values(None) == ()
+
+
+
+def test_select_blueprints_reserve_discord_option_slots_for_all_and_other():
+    m = load()
+    choices = tuple(
+        m.DecisionChoice(f"choice-{index}", f"Choice {index}", "Consequence")
+        for index in range(30)
+    )
+
+    multi = m.build_component_blueprint(
+        simple_request(m, choices=choices, multi_select=True)
+    )[0]
+    single = m.build_component_blueprint(
+        simple_request(m, choices=choices, multi_select=False)
+    )[0]
+
+    assert len(multi.options) == 25
+    assert multi.options[0].value == "__all__"
+    assert multi.options[-1].value == "__other__"
+    assert len(single.options) == 25
+    assert single.options[-1].value == "__other__"
+
+
+def test_visible_hierarchy_uses_bold_compact_title_and_section_labels():
+    m = load()
+    request = simple_request(
+        m,
+        title="Approve the foundation approach for the new Agentik OS repository. "
+        "This explanatory sentence belongs in the decision body, not the title.",
+    )
+
+    rendered = m.render_decision_content(request)
+
+    assert rendered.startswith("**Approve the foundation approach for the new Agentik OS repository.**")
+    assert "**Target**\nOperator profile release pointer" in rendered
+    assert "**Decision**\nWhich release channel should receive the build?" in rendered
+    assert "**Default**\nHold; the active release remains unchanged." in rendered
+    assert "\nTARGET\n" not in rendered
+    assert "\nDECISION\n" not in rendered
 
     complex_controls = m.build_component_blueprint(
         simple_request(
@@ -222,6 +310,39 @@ def test_component_blueprint_uses_selects_stable_ids_and_required_controls():
     assert [control.label for control in complex_controls[1:]] == [
         "Continue", "Technical context", "Close"
     ]
+
+
+def test_compact_title_is_not_repeated_as_the_decision_body():
+    m = load()
+    request = simple_request(
+        m,
+        title="Choose release. Additional explanatory sentence.",
+        decision="Choose release.",
+    )
+
+    rendered = m.render_decision_content(request)
+    assert rendered.count("Choose release.") == 1
+
+
+def test_exact_scope_confirmation_lists_every_multi_selected_action():
+    m = load()
+    request = simple_request(
+        m,
+        kind=m.SurfaceKind.APPROVAL,
+        multi_select=True,
+        context="A bounded approval is required.",
+        established=("The candidate passed tests.",),
+        risk="The selected actions will be authorized.",
+        includes=("Selected actions",),
+        excludes=("Everything else",),
+        rollback="Cancel before execution.",
+    )
+
+    confirmation = m.render_exact_scope_confirmation(
+        request, selected_value=["stable", "hold"]
+    )
+    assert "- Stable" in confirmation.body
+    assert "- Hold" in confirmation.body
 
 
 def test_lifecycle_rechecks_full_authorization_and_resolves_atomically():
@@ -351,6 +472,16 @@ def test_legacy_clarify_safely_forms_approved_simple_or_open_text_request():
     assert request.choices[0].recommended is True
     assert request.default_action == "No action; work remains paused until answered."
     assert "Hermes needs your input" not in m.render_decision_surface(request).body
+
+    multi_request = m.decision_request_from_clarify(
+        question="Which quality gates should run?",
+        choices=("Lint", "Tests", "Build"),
+        clarify_id="clarify-multi",
+        source_session="discord:operator:session-multi",
+        surface=None,
+        multi_select=True,
+    )
+    assert multi_request.multi_select is True
 
     open_request = m.decision_request_from_clarify(
         question="Name the rollout constraint",
@@ -495,7 +626,7 @@ def test_embed_fields_and_scope_confirmation_are_utf16_bounded():
     assert m.utf16_len(embed.title) <= 256
     assert m.utf16_len(embed.description) <= 4096
     assert m.utf16_len(confirmation.body) <= 1900
-    assert "ACTION\nStable" in confirmation.body
+    assert "**Action**\nStable" in confirmation.body
 
 
 def test_detail_truncation_never_exceeds_utf16_limit():

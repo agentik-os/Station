@@ -264,6 +264,8 @@ try:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        interaction_selected_values,
+        normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
         render_open_text_modal,
@@ -280,6 +282,8 @@ except ImportError:
         build_component_blueprint,
         build_decision_embed,
         decision_request_from_clarify,
+        interaction_selected_values,
+        normalize_selected_choice_ids,
         render_decision_surface,
         render_exact_scope_confirmation,
         render_open_text_modal,
@@ -9446,6 +9450,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 clarify_id=clarify_id,
                 source_session=session_key,
                 surface=surface if isinstance(surface, dict) else None,
+                multi_select=bool((metadata or {}).get("multi_select")),
             )
             target_id = (
                 metadata.get("thread_id")
@@ -12003,6 +12008,9 @@ def _define_discord_view_classes() -> None:
     class AdaptiveDecisionView(discord.ui.View):
         """Canonical adaptive clarify controls with one-message lifecycle."""
 
+        ALL_OPTIONS_VALUE = "__all__"
+        OTHER_VALUE = "__other__"
+
         def __init__(
             self,
             *,
@@ -12026,6 +12034,7 @@ def _define_discord_view_classes() -> None:
             self.profile_id = str(profile_id)
             self.responder_user_id = str(responder_user_id)
             self.selected_value: Optional[str] = None
+            self.selected_values: list[str] = []
             self.resolved = False
             self._resolution_lock = threading.Lock()
             self._message = None
@@ -12047,10 +12056,14 @@ def _define_discord_view_classes() -> None:
                         for option in spec.options
                     ]
                     select = discord.ui.Select(
-                        placeholder="Choose one…",
+                        placeholder=(
+                            "Choose one or more…"
+                            if self.request.multi_select
+                            else spec.placeholder or "Choose one…"
+                        ),
                         options=options,
-                        min_values=1,
-                        max_values=1,
+                        min_values=spec.min_values,
+                        max_values=len(options) if self.request.multi_select else spec.max_values,
                         custom_id=spec.custom_id,
                     )
                     select.callback = self._on_select
@@ -12119,10 +12132,15 @@ def _define_discord_view_classes() -> None:
                     "This decision is no longer active.", ephemeral=True
                 )
                 return
-            values = getattr(interaction.data, "values", None)
-            if values is None and isinstance(interaction.data, dict):
-                values = interaction.data.get("values")
-            self.selected_value = str((values or [""])[0])
+            values = interaction_selected_values(interaction.data)
+            if (
+                self.ALL_OPTIONS_VALUE in (values or ())
+                and self.OTHER_VALUE not in (values or ())
+            ):
+                values = (self.ALL_OPTIONS_VALUE,)
+            selected_values = normalize_selected_choice_ids(self.request, values or ())
+            self.selected_values = selected_values
+            self.selected_value = selected_values[0] if selected_values else None
             await interaction.response.defer()
 
         async def _on_context(self, interaction: "discord.Interaction") -> None:
@@ -12136,13 +12154,76 @@ def _define_discord_view_classes() -> None:
                 truncate_station_text(detail, 1900), ephemeral=True
             )
 
+        async def _send_scope_confirmation(
+            self,
+            interaction: "discord.Interaction",
+            reviewed_value: Any,
+            reviewed_selection: tuple[str, ...],
+        ) -> None:
+            confirmation = render_exact_scope_confirmation(
+                self.request, selected_value=reviewed_value
+            )
+            parent = self
+
+            class ScopeConfirmationView(discord.ui.View):
+                def __init__(scope_self):
+                    super().__init__(timeout=120)
+                    scope_self.reviewed_value = reviewed_value
+                    scope_self.reviewed_selection = reviewed_selection
+                    approve = discord.ui.Button(
+                        label="Approve exact scope",
+                        style=discord.ButtonStyle.danger,
+                        custom_id=confirmation.confirm_custom_id,
+                    )
+                    approve.callback = scope_self._approve
+                    scope_self.add_item(approve)
+                    cancel = discord.ui.Button(
+                        label="Cancel",
+                        style=discord.ButtonStyle.secondary,
+                        custom_id=confirmation.cancel_custom_id,
+                    )
+                    cancel.callback = scope_self._cancel
+                    scope_self.add_item(cancel)
+
+                async def _approve(scope_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    if tuple(parent.selected_values) != scope_self.reviewed_selection:
+                        await submitted.response.send_message(
+                            "Selection changed after this confirmation opened. "
+                            "Close it and confirm the current selection.",
+                            ephemeral=True,
+                        )
+                        return
+                    await parent._resolve(
+                        submitted, scope_self.reviewed_value, from_private=True
+                    )
+
+                async def _cancel(scope_self, submitted):
+                    if not parent._check_auth(submitted):
+                        await parent._deny(submitted)
+                        return
+                    for child in scope_self.children:
+                        child.disabled = True
+                    await parent._cancel(submitted, from_private=True)
+
+            await interaction.response.send_message(
+                confirmation.body,
+                view=ScopeConfirmationView(),
+                ephemeral=True,
+            )
+
         async def _on_primary(self, interaction: "discord.Interaction") -> None:
             if not self._check_auth(interaction):
                 await self._deny(interaction)
                 return
             kind = select_surface_kind(self.request)
-            if kind is SurfaceKind.OPEN_TEXT:
-                modal_spec = render_open_text_modal(self.request)
+            if kind is SurfaceKind.OPEN_TEXT or self.OTHER_VALUE in self.selected_values:
+                modal_spec = render_open_text_modal(
+                    self.request,
+                    allow_choice_other=self.OTHER_VALUE in self.selected_values,
+                )
                 parent = self
 
                 class DecisionTextModal(discord.ui.Modal):
@@ -12164,78 +12245,44 @@ def _define_discord_view_classes() -> None:
                         if not parent._check_auth(submitted):
                             await parent._deny(submitted)
                             return
-                        await parent._resolve(
-                            submitted, str(modal_self.response.value), from_private=True
-                        )
+                        custom_value = str(modal_self.response.value)
+                        if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
+                            await parent._send_scope_confirmation(
+                                submitted,
+                                [custom_value] if parent.request.multi_select else custom_value,
+                                tuple(parent.selected_values),
+                            )
+                        else:
+                            await parent._resolve(
+                                submitted, custom_value, from_private=True
+                            )
 
                 await interaction.response.send_modal(DecisionTextModal())
                 return
             if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
-                reviewed_value = self.selected_value
+                reviewed_value = (
+                    list(self.selected_values)
+                    if self.request.multi_select
+                    else self.selected_value
+                )
                 if not reviewed_value:
                     await interaction.response.send_message(
                         "Choose an option before opening confirmation.", ephemeral=True
                     )
                     return
-                confirmation = render_exact_scope_confirmation(
-                    self.request, selected_value=reviewed_value
-                )
-                parent = self
-
-                class ScopeConfirmationView(discord.ui.View):
-                    def __init__(scope_self):
-                        super().__init__(timeout=120)
-                        scope_self.reviewed_value = reviewed_value
-                        approve = discord.ui.Button(
-                            label="Approve exact scope",
-                            style=discord.ButtonStyle.danger,
-                            custom_id=confirmation.confirm_custom_id,
-                        )
-                        approve.callback = scope_self._approve
-                        scope_self.add_item(approve)
-                        cancel = discord.ui.Button(
-                            label="Cancel",
-                            style=discord.ButtonStyle.secondary,
-                            custom_id=confirmation.cancel_custom_id,
-                        )
-                        cancel.callback = scope_self._cancel
-                        scope_self.add_item(cancel)
-
-                    async def _approve(scope_self, submitted):
-                        if not parent._check_auth(submitted):
-                            await parent._deny(submitted)
-                            return
-                        if parent.selected_value != scope_self.reviewed_value:
-                            await submitted.response.send_message(
-                                "Selection changed after this confirmation opened. "
-                                "Close it and confirm the current selection.",
-                                ephemeral=True,
-                            )
-                            return
-                        await parent._resolve(
-                            submitted, scope_self.reviewed_value, from_private=True
-                        )
-
-                    async def _cancel(scope_self, submitted):
-                        if not parent._check_auth(submitted):
-                            await parent._deny(submitted)
-                            return
-                        for child in scope_self.children:
-                            child.disabled = True
-                        await parent._cancel(submitted, from_private=True)
-
-                await interaction.response.send_message(
-                    confirmation.body,
-                    view=ScopeConfirmationView(),
-                    ephemeral=True,
+                await self._send_scope_confirmation(
+                    interaction, reviewed_value, tuple(self.selected_values)
                 )
                 return
-            if not self.selected_value:
+            if not self.selected_values:
                 await interaction.response.send_message(
                     "Choose an option before continuing.", ephemeral=True
                 )
                 return
-            await self._resolve(interaction, self.selected_value)
+            await self._resolve(
+                interaction,
+                self.selected_values if self.request.multi_select else self.selected_value,
+            )
 
         async def _on_close(self, interaction: "discord.Interaction") -> None:
             await self._cancel(interaction)
@@ -12259,10 +12306,20 @@ def _define_discord_view_classes() -> None:
                     return choice.label
             return selected
 
+        def _gateway_values(self, selected: Any) -> str:
+            if not self.request.multi_select:
+                return self._gateway_value(str(selected or ""))
+            resolved_values = [
+                self._gateway_value(str(value))
+                for value in (selected if isinstance(selected, (list, tuple)) else [selected])
+                if str(value or "")
+            ]
+            return json.dumps(resolved_values, ensure_ascii=False)
+
         async def _resolve(
             self,
             interaction: "discord.Interaction",
-            selected: str,
+            selected: Any,
             *,
             from_private: bool = False,
         ) -> None:
@@ -12280,7 +12337,7 @@ def _define_discord_view_classes() -> None:
                     "This decision has already been resolved.", ephemeral=True
                 )
                 return
-            resolved_value = self._gateway_value(selected)
+            resolved_value = self._gateway_values(selected)
             gateway_resolved = False
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
@@ -12335,10 +12392,10 @@ def _define_discord_view_classes() -> None:
                     content=private_status, view=None
                 )
                 if message:
-                    await message.edit(content=content, embed=embed, view=self)
+                    await message.edit(content=content, embed=embed, view=None)
             else:
                 await interaction.response.edit_message(
-                    content=content, embed=embed, view=self
+                    content=content, embed=embed, view=None
                 )
 
         async def on_timeout(self):
@@ -12364,20 +12421,18 @@ def _define_discord_view_classes() -> None:
                 content = getattr(message, "content", None)
                 embeds = getattr(message, "embeds", ()) or ()
                 embed = embeds[0] if embeds else None
-                expiration = truncate_station_text(
-                    f"Prompt expired — {self.request.default_action}", 2048
-                )
+                expiration = "Expired — no response received; no action was taken."
                 if content:
                     content = append_station_status(
                         content,
-                        "EXPIRED",
-                        sanitize_visible_text(self.request.default_action),
+                        "Expired",
+                        "No response received; no action was taken.",
                         limit=2000,
                     )
                 if embed:
                     embed.color = discord.Color.greyple()
                     embed.set_footer(text=expiration)
-                await message.edit(content=content, embed=embed, view=self)
+                await message.edit(content=content, embed=embed, view=None)
             except Exception:
                 logger.debug("Unable to expire adaptive decision", exc_info=True)
 

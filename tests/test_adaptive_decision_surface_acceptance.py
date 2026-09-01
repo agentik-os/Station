@@ -65,11 +65,11 @@ def test_simple_surface_matches_approved_information_order():
         rollback="",
     )
     text = m.render_decision_content(req)
-    assert text.index("Choose the rollout strategy") < text.index("TARGET") < text.index("DECISION")
+    assert text.index("**Choose the rollout strategy**") < text.index("**Target**") < text.index("**Decision**")
     assert "Operator → Agentik" in text
     assert "No response leaves production unchanged." in text
     assert "Hermes needs your input" not in text
-    assert "CONTEXT" not in text
+    assert "**Context**" not in text
 
 
 def test_complex_surface_keeps_required_context_and_choice_consequences():
@@ -77,17 +77,17 @@ def test_complex_surface_keeps_required_context_and_choice_consequences():
     req = request(m, m.SurfaceKind.COMPLEX, risk="", includes=(), excludes=(), rollback="")
     text = m.render_decision_content(req)
     for required in (
-        "CONTEXT",
+        "**Context**",
         "The duplicate-question fix is ready",
-        "ESTABLISHED",
+        "**Established**",
         "Tests pass.",
-        "TARGET",
-        "DECISION",
-        "RECOMMENDATION",
+        "**Target**",
+        "**Decision**",
+        "**Recommendation**",
         "Canary Operator first",
-        "CHOICES",
+        "**Choices**",
         "Lowest risk; stop on failed readback.",
-        "DEFAULT",
+        "**Default**",
     ):
         assert required in text
 
@@ -95,7 +95,7 @@ def test_complex_surface_keeps_required_context_and_choice_consequences():
 def test_risk_surface_keeps_exact_scope_and_rollback():
     m = load_surfaces()
     text = m.render_decision_content(request(m, m.SurfaceKind.RISK))
-    for required in ("RISK", "INCLUDES", "EXCLUDES", "ROLLBACK", "Secrets", "previous release pointer"):
+    for required in ("**Risk**", "**Includes**", "**Excludes**", "**Rollback**", "Secrets", "previous release pointer"):
         assert required in text
 
 
@@ -178,6 +178,7 @@ def test_gateway_binds_decision_surface_to_the_exact_source_session():
     assert "surface_payload = dict(surface or {})" in callback
     assert 'surface_payload["source_session"] = ctx.session_key or ""' in callback
     assert '"decision_user_id": str(ctx.source.user_id)' in callback
+    assert '"multi_select": bool(multi_select)' in callback
     assert "if not ctx.source.user_id:" in callback
     assert "[clarify source user unavailable]" in callback
     assert "surface=surface_payload or None" in callback

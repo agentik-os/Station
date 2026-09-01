@@ -7,6 +7,7 @@ interactive controls and authorization lifecycle.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -62,6 +63,20 @@ def sanitize_visible_text(value: object) -> str:
     return _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
 
 
+def interaction_selected_values(data: object) -> tuple[str, ...]:
+    """Extract Discord select values from mapping or attribute payloads."""
+    if isinstance(data, Mapping):
+        raw_values = data.get("values")
+    else:
+        raw_values = getattr(data, "values", None)
+    if raw_values is None or isinstance(raw_values, (str, bytes)):
+        return ()
+    try:
+        return tuple(str(value) for value in raw_values if str(value))
+    except TypeError:
+        return ()
+
+
 @dataclass(frozen=True)
 class DecisionChoice:
     id: str
@@ -85,6 +100,7 @@ class DecisionRequest:
     decision: str
     choices: Sequence[DecisionChoice]
     default_action: str
+    multi_select: bool = False
     kind: Optional[SurfaceKind] = None
     context: str = ""
     established: Sequence[str] = ()
@@ -144,6 +160,7 @@ def decision_request_from_clarify(
     clarify_id: str,
     source_session: str,
     surface: Optional[dict],
+    multi_select: bool = False,
 ) -> DecisionRequest:
     """Parse the typed boundary or safely adapt a legacy clarify call."""
     question = sanitize_visible_text(question)
@@ -174,6 +191,7 @@ def decision_request_from_clarify(
             decision=question,
             choices=tuple(parsed_choices),
             default_action="No action; work remains paused until answered.",
+            multi_select=bool(multi_select) and bool(parsed_choices),
             source_session=str(source_session),
         )
 
@@ -263,6 +281,7 @@ def decision_request_from_clarify(
         target=str(surface.get("target") or "Current request in this session"),
         decision=str(surface.get("decision") or question),
         choices=tuple(parsed_choices),
+        multi_select=bool(multi_select or surface.get("multi_select")) and bool(parsed_choices),
         recommendation=str(surface.get("recommendation") or ""),
         risk=str(surface.get("risk") or ""),
         includes=tuple(surface.get("includes") or ()),
@@ -292,12 +311,23 @@ def _list_lines(values: Iterable[object]) -> list[str]:
     return [f"- {sanitize_visible_text(value)}" for value in values if sanitize_visible_text(value)]
 
 
+def _section(label: str, body: str) -> str:
+    return f"**{label}**\n{body}"
+
+
+def _compact_title(value: object, limit: int = 80) -> str:
+    """Keep titles scannable; explanatory prose belongs in the decision body."""
+    title = sanitize_visible_text(value).splitlines()[0].strip(" #*")
+    sentence = re.split(r"(?<=[.!?])\s+", title, maxsplit=1)[0].strip()
+    return _truncate_utf16(sentence or title, limit)
+
+
 def _essential_blocks(request: DecisionRequest) -> list[str]:
     blocks = [
-        _truncate_utf16(sanitize_visible_text(request.title), 120),
+        f"**{_compact_title(request.title)}**",
         _truncate_utf16(sanitize_visible_text(request.state), 160),
-        f"TARGET\n{sanitize_visible_text(request.target)}",
-        f"DECISION\n{sanitize_visible_text(request.decision)}",
+        _section("Target", sanitize_visible_text(request.target)),
+        _section("Decision", sanitize_visible_text(request.decision)),
     ]
     if request.choices:
         choice_lines = []
@@ -307,18 +337,18 @@ def _essential_blocks(request: DecisionRequest) -> list[str]:
                 f"- {sanitize_visible_text(choice.label)} — "
                 f"{sanitize_visible_text(choice.consequence)}{recommendation}"
             )
-        blocks.append("CHOICES\n" + "\n".join(choice_lines))
+        blocks.append(_section("Choices", "\n".join(choice_lines)))
     if sanitize_visible_text(request.recommendation):
-        blocks.append("RECOMMENDATION\n" + sanitize_visible_text(request.recommendation))
+        blocks.append(_section("Recommendation", sanitize_visible_text(request.recommendation)))
     if sanitize_visible_text(request.risk):
-        blocks.append("RISK\n" + sanitize_visible_text(request.risk))
+        blocks.append(_section("Risk", sanitize_visible_text(request.risk)))
     if request.includes:
-        blocks.append("INCLUDES\n" + "\n".join(_list_lines(request.includes)))
+        blocks.append(_section("Includes", "\n".join(_list_lines(request.includes))))
     if request.excludes:
-        blocks.append("EXCLUDES\n" + "\n".join(_list_lines(request.excludes)))
+        blocks.append(_section("Excludes", "\n".join(_list_lines(request.excludes))))
     if sanitize_visible_text(request.rollback):
-        blocks.append("ROLLBACK\n" + sanitize_visible_text(request.rollback))
-    blocks.append("DEFAULT\n" + sanitize_visible_text(request.default_action))
+        blocks.append(_section("Rollback", sanitize_visible_text(request.rollback)))
+    blocks.append(_section("Default", sanitize_visible_text(request.default_action)))
     return blocks
 
 
@@ -386,6 +416,9 @@ class ComponentSpec:
     custom_id: str
     label: str = ""
     options: Sequence[ComponentOption] = ()
+    placeholder: str = ""
+    min_values: int = 1
+    max_values: int = 1
 
 
 @dataclass(frozen=True)
@@ -479,19 +512,40 @@ def build_component_blueprint(request: DecisionRequest) -> tuple[ComponentSpec, 
     prefix = f"decision:{request.decision_id}"
     controls = []
     if request.choices:
+        options = tuple(
+            ComponentOption(
+                value=choice.id,
+                label=choice.label,
+                description=choice.consequence,
+                recommended=choice.recommended,
+            )
+            for choice in request.choices[:23 if request.multi_select else 24]
+        )
+        if request.multi_select:
+            options = (
+                ComponentOption(
+                    value="__all__",
+                    label="All options",
+                    description="Select every available option",
+                ),
+                *options,
+            )
+        options = (
+            *options,
+            ComponentOption(
+                value="__other__",
+                label="Other",
+                description="Write a different answer",
+            ),
+        )
         controls.append(
             ComponentSpec(
                 kind="select",
                 custom_id=f"{prefix}:select",
-                options=tuple(
-                    ComponentOption(
-                        value=choice.id,
-                        label=choice.label,
-                        description=choice.consequence,
-                        recommended=choice.recommended,
-                    )
-                    for choice in request.choices[:25]
-                ),
+                options=options,
+                placeholder="Choose one or more…" if request.multi_select else "Choose one…",
+                min_values=1,
+                max_values=len(options) if request.multi_select else 1,
             )
         )
     controls.extend(
@@ -504,8 +558,25 @@ def build_component_blueprint(request: DecisionRequest) -> tuple[ComponentSpec, 
     return tuple(controls)
 
 
-def render_open_text_modal(request: DecisionRequest) -> RenderedTextModal:
-    if select_surface_kind(request) is not SurfaceKind.OPEN_TEXT:
+def normalize_selected_choice_ids(
+    request: DecisionRequest, selected_values: Sequence[object]
+) -> list[str]:
+    """Normalize Discord select values in canonical choice order."""
+    raw = [str(value) for value in selected_values if str(value)]
+    if "__other__" in raw:
+        return ["__other__"]
+    valid = [choice.id for choice in request.choices]
+    if request.multi_select and "__all__" in raw:
+        return valid
+    selected = set(raw)
+    ordered = [choice_id for choice_id in valid if choice_id in selected]
+    return ordered if request.multi_select else ordered[:1]
+
+
+def render_open_text_modal(
+    request: DecisionRequest, *, allow_choice_other: bool = False
+) -> RenderedTextModal:
+    if select_surface_kind(request) is not SurfaceKind.OPEN_TEXT and not allow_choice_other:
         raise ValueError("text modal requires an open_text decision")
     return RenderedTextModal(
         title="Write response",
@@ -516,25 +587,41 @@ def render_open_text_modal(request: DecisionRequest) -> RenderedTextModal:
 
 
 def render_exact_scope_confirmation(
-    request: DecisionRequest, *, selected_value: str
+    request: DecisionRequest, *, selected_value: object
 ) -> RenderedScopeConfirmation:
     """Render the private second stage required by risk and approval decisions."""
     kind = select_surface_kind(request)
     if kind not in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
         raise ValueError("exact-scope confirmation requires a risk or approval decision")
-    selected_label = next(
-        (
-            sanitize_visible_text(choice.label)
-            for choice in request.choices
-            if choice.id == selected_value
-        ),
-        sanitize_visible_text(selected_value),
+    raw_values = (
+        list(selected_value)
+        if isinstance(selected_value, (list, tuple))
+        else [selected_value]
+    )
+    labels = []
+    for raw_value in raw_values:
+        value = str(raw_value or "")
+        labels.append(
+            next(
+                (
+                    sanitize_visible_text(choice.label)
+                    for choice in request.choices
+                    if choice.id == value
+                ),
+                sanitize_visible_text(value),
+            )
+        )
+    visible_labels = [label for label in labels if label]
+    selected_label = (
+        visible_labels[0]
+        if len(visible_labels) == 1
+        else "\n".join(f"- {label}" for label in visible_labels)
     )
     body = "\n\n".join(
         (
-            "ACTION\n" + selected_label,
-            "INCLUDES\n" + "\n".join(_list_lines(request.includes)),
-            "EXCLUDES\n" + "\n".join(_list_lines(request.excludes)),
+            _section("Action", selected_label),
+            _section("Includes", "\n".join(_list_lines(request.includes))),
+            _section("Excludes", "\n".join(_list_lines(request.excludes))),
             "Confirm this exact scope. No other profile or target is authorized.",
         )
     )
@@ -553,10 +640,10 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
     blocks = [sanitize_visible_text(request.state)]
     if kind is SurfaceKind.BATCH:
         if sanitize_visible_text(request.context):
-            blocks.append("CONTEXT\n" + sanitize_visible_text(request.context))
+            blocks.append(_section("Context", sanitize_visible_text(request.context)))
         established = _list_lines(request.established)
         if established:
-            blocks.append("ESTABLISHED\n" + "\n".join(established))
+            blocks.append(_section("Established", "\n".join(established)))
         for index, item in enumerate(request.batch_items, start=1):
             choices = "\n".join(
                 f"- {sanitize_visible_text(choice.label)} — "
@@ -564,13 +651,13 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
                 for choice in item.choices
             )
             blocks.append(
-                f"QUESTION {index}\n{sanitize_visible_text(item.decision)}\n"
-                f"TARGET · {sanitize_visible_text(item.target)}\n{choices}"
+                f"**Question {index}**\n{sanitize_visible_text(item.decision)}\n"
+                f"**Target** · {sanitize_visible_text(item.target)}\n{choices}"
             )
-        blocks.append(f"DEFAULT\n{sanitize_visible_text(request.default_action)}")
+        blocks.append(_section("Default", sanitize_visible_text(request.default_action)))
         return RenderedDecisionSurface(
             mode="embed",
-            title=sanitize_visible_text(request.title),
+            title=_compact_title(request.title),
             body="\n\n".join(blocks),
             semantic_color="neutral",
             primary_label="Continue",
@@ -580,48 +667,50 @@ def render_decision_surface(request: DecisionRequest) -> RenderedDecisionSurface
     if kind is not SurfaceKind.SIMPLE:
         context = sanitize_visible_text(request.context)
         if context:
-            blocks.append("CONTEXT\n" + context)
+            blocks.append(_section("Context", context))
         established = _list_lines(request.established)
         if established:
-            blocks.append("ESTABLISHED\n" + "\n".join(established))
-    blocks.append(f"TARGET\n{sanitize_visible_text(request.target)}")
+            blocks.append(_section("Established", "\n".join(established)))
+    blocks.append(_section("Target", sanitize_visible_text(request.target)))
     decision_heading = (
-        "CHANGE" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "DECISION"
+        "Change" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "Decision"
     )
     visible_decision = sanitize_visible_text(request.decision)
-    title_key = sanitize_visible_text(request.title).rstrip(" \t\r\n?!.,:;").casefold()
+    title_key = _compact_title(request.title).rstrip(" \t\r\n?!.,:;").casefold()
     decision_key = visible_decision.rstrip(" \t\r\n?!.,:;").casefold()
     if decision_key != title_key:
-        blocks.append(f"{decision_heading}\n{visible_decision}")
+        blocks.append(_section(decision_heading, visible_decision))
     if kind is not SurfaceKind.SIMPLE:
         recommendation = sanitize_visible_text(request.recommendation)
         if recommendation:
-            blocks.append("RECOMMENDATION\n" + recommendation)
+            blocks.append(_section("Recommendation", recommendation))
         if request.choices:
             blocks.append(
-                "CHOICES\n"
-                + "\n".join(
-                    f"- {sanitize_visible_text(choice.label)} — "
-                    f"{sanitize_visible_text(choice.consequence)}"
-                    for choice in request.choices
+                _section(
+                    "Choices",
+                    "\n".join(
+                        f"- {sanitize_visible_text(choice.label)} — "
+                        f"{sanitize_visible_text(choice.consequence)}"
+                        for choice in request.choices
+                    ),
                 )
             )
     if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL}:
         blocks.extend(
             (
-                "RISK\n" + sanitize_visible_text(request.risk),
-                "INCLUDES\n" + "\n".join(_list_lines(request.includes)),
-                "EXCLUDES\n" + "\n".join(_list_lines(request.excludes)),
-                "ROLLBACK\n" + sanitize_visible_text(request.rollback),
+                _section("Risk", sanitize_visible_text(request.risk)),
+                _section("Includes", "\n".join(_list_lines(request.includes))),
+                _section("Excludes", "\n".join(_list_lines(request.excludes))),
+                _section("Rollback", sanitize_visible_text(request.rollback)),
             )
         )
-    blocks.append(f"DEFAULT\n{sanitize_visible_text(request.default_action)}")
+    blocks.append(_section("Default", sanitize_visible_text(request.default_action)))
     complex_surface = kind in {
         SurfaceKind.COMPLEX, SurfaceKind.RISK, SurfaceKind.APPROVAL, SurfaceKind.BATCH
     }
     return RenderedDecisionSurface(
         mode="content" if not complex_surface else "embed",
-        title=sanitize_visible_text(request.title),
+        title=_compact_title(request.title),
         body="\n\n".join(block for block in blocks if block),
         semantic_color=(
             "warning" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "neutral"
@@ -650,7 +739,7 @@ def build_decision_embed(request: DecisionRequest, limit: int = 4096) -> Rendere
     kind = select_surface_kind(request)
     semantic_color = "warning" if kind in {SurfaceKind.RISK, SurfaceKind.APPROVAL} else "neutral"
     return RenderedDecisionEmbed(
-        title=_truncate_utf16(sanitize_visible_text(request.title), 256),
+        title=_truncate_utf16(_compact_title(request.title), 256),
         description=remainder if separator else rendered,
         semantic_color=semantic_color,
     )
@@ -661,13 +750,13 @@ def render_decision_content(request: DecisionRequest, limit: int = 2000) -> str:
     if limit < 1:
         return ""
     surface = render_decision_surface(request)
-    primary = f"{surface.title}\n\n{surface.body}"
+    primary = f"**{surface.title}**\n\n{surface.body}"
     detail = sanitize_visible_text(request.context_detail)
-    full = primary + (f"\n\nDETAIL\n{detail}" if detail else "")
+    full = primary + (f"\n\n**Detail**\n{detail}" if detail else "")
     if utf16_len(full) <= limit:
         return full
     if utf16_len(primary) <= limit:
-        marker = "\n\nDETAIL\n[Evidence shortened — use the detail control]"
+        marker = "\n\n**Detail**\n[Evidence shortened — use the detail control]"
         available = limit - utf16_len(primary) - utf16_len(marker) - utf16_len("\n\n")
         if available <= 0:
             return _prefix_utf16(primary, limit)

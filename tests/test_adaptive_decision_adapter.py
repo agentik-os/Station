@@ -37,7 +37,7 @@ def test_adaptive_view_uses_selects_modal_auth_second_stage_and_same_message_edi
     assert "resolve_gateway_clarify" in view
     assert "child.disabled = True" in view
     assert "interaction.response.edit_message" in view
-    assert "Prompt expired" in view
+    assert "Expired — no response received; no action was taken." in view
     assert "mark_awaiting_text" not in view
 
 
@@ -58,6 +58,36 @@ def test_send_decision_edits_existing_canonical_message_on_retry():
     assert decision.index("self._decision_message_ids.get(decision_key)") < decision.index(
         'metadata.get("decision_message_id")'
     )
+
+
+def test_single_clarify_forwards_multiselect_and_supports_all_options():
+    source = ADAPTER.read_text(encoding="utf-8")
+    clarify = method(source, "send_clarify", "send_update_prompt")
+    view = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+
+    assert 'multi_select=bool((metadata or {}).get("multi_select"))' in clarify
+    assert 'ALL_OPTIONS_VALUE = "__all__"' in view
+    assert 'OTHER_VALUE = "__other__"' in view
+    assert "max_values=len(options)" in view
+    assert '"Choose one or more…"' in view
+    assert "self.selected_values" in view
+    assert "json.dumps(resolved_values" in view
+    assert "self.OTHER_VALUE in self.selected_values" in view
+
+
+def test_resolved_and_expired_decisions_remove_stale_controls_and_avoid_default_duplication():
+    source = ADAPTER.read_text(encoding="utf-8")
+    view = source[
+        source.index("    class AdaptiveDecisionView(discord.ui.View):"):
+        source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
+    ]
+
+    assert "content=content, embed=embed, view=None" in view
+    assert '"No response received; no action was taken."' in view
+    assert "await message.edit(content=content, embed=embed, view=None)" in view
 
 
 def test_open_text_plain_modal_and_cancel_paths_do_not_race_or_block():
@@ -95,11 +125,13 @@ def test_adaptive_view_snapshots_confirmation_and_bounds_every_status_path():
         source.index("    class AdaptiveBatchDecisionView(discord.ui.View):")
     ]
 
-    assert "reviewed_value = self.selected_value" in view
+    assert "list(self.selected_values)" in view
     assert "selected_value=reviewed_value" in view
-    assert "parent.selected_value != scope_self.reviewed_value" in view
+    assert "tuple(parent.selected_values) != scope_self.reviewed_selection" in view
     assert "Selection changed after this confirmation opened" in view
     assert "scope_self.reviewed_value" in view
+    assert "parent._send_scope_confirmation(" in view
+    assert "[custom_value] if parent.request.multi_select else custom_value" in view
     assert "detail[:1900]" not in view
     assert "truncate_station_text(detail, 1900)" in view
     assert "append_station_status(" in view
