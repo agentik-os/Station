@@ -66,12 +66,15 @@ def _active_mark(state:str)->str:
  return "→"
 
 
-def render_action_message(label: str, objective: str, items: Iterable[dict], *, status: str|None=None) -> str:
+def render_action_message(label: str, objective: str, items: Iterable[dict], *, status: str|None=None, blocked_reason: str|None=None) -> str:
  metrics=plan_metrics(items); state=str(status or metrics["status"]).upper()
  title=_compact(label or "Station",32).upper()
  objective=_compact(objective,180) or "Executing requested action"
  active_mark=_active_mark(state)
  lines=[f"{title} / {state}","",objective,"",f"{metrics['completed']} of {metrics['total']} actions resolved",f"{metrics['bar']} {metrics['percent']}%","","NOW",f"{active_mark} {metrics['current']}"]
+ if str(state).upper()=="BLOCKED":
+  reason=_compact(blocked_reason,180)
+  if reason: lines.extend(["","BLOCKED REASON",reason])
  base="\n".join(lines)
  rows=metrics["rows"]
  if not rows: return base
@@ -109,7 +112,7 @@ class StationActionMessage:
   self.objective=_compact(objective,180); self.label=_compact(label,32) or "Operator"
   self.reply_to=str(reply_to) if reply_to else None; self.items:list[dict[str,str]]=[]
   self.message_id:str|None=None; self.status="RUNNING"
-  self.action_id=uuid.uuid4().hex; self.revision=0
+  self.action_id=uuid.uuid4().hex; self.revision=0; self.blocked_reason=""
   self._operation_lock=asyncio.Lock()
   state=self._load().get(self.session_key)
   if isinstance(state,dict) and str(state.get("status")) in _ACTIVE_STATES:
@@ -121,6 +124,7 @@ class StationActionMessage:
     self.items=normalize_plan(state.get("items") or [])
     self.action_id=str(state.get("action_id") or self.action_id)
     self.revision=max(0,int(state.get("revision") or 0))
+    self.blocked_reason=_compact(state.get("blocked_reason") or "",180)
 
  def _load(self)->dict:
   with _STATE_LOCK:
@@ -135,11 +139,15 @@ class StationActionMessage:
     "message_id":self.message_id,"chat_id":self.chat_id,"thread_id":self.thread_id,
     "objective":self.objective,"label":self.label,"status":self.status,
     "items":self.items,"action_id":self.action_id,"revision":self.revision,
+    "blocked_reason":self.blocked_reason,
     "updated_at":int(time.time()),
    }
    self.state_path.parent.mkdir(parents=True,exist_ok=True)
    fd,tmp=tempfile.mkstemp(prefix=f".{self.state_path.name}.",dir=str(self.state_path.parent))
    try:
+    payload=data[self.session_key]
+    if str(payload.get("status") or "").upper()=="BLOCKED" and not str(payload.get("blocked_reason") or "").strip():
+     payload["blocked_reason"]="turn ended with unresolved plan items; Station is not a completion gate"
     with os.fdopen(fd,"w",encoding="utf-8") as handle:
      json.dump(data,handle,ensure_ascii=False,indent=2,sort_keys=True); handle.write("\n")
     os.chmod(tmp,0o600); os.replace(tmp,self.state_path)
@@ -168,11 +176,11 @@ class StationActionMessage:
   if not getattr(result,"success",False) or not getattr(result,"message_id",None): return False
   self.message_id=str(result.message_id); self.revision+=1; self._persist(); return True
 
- async def finish(self,*,failed:bool=False,cancelled:bool=False)->bool:
+ async def finish(self,*,failed:bool=False,cancelled:bool=False,blocked_reason:str|None=None)->bool:
   async with self._operation_lock:
-   return await self._finish(failed=failed,cancelled=cancelled)
+   return await self._finish(failed=failed,cancelled=cancelled,blocked_reason=blocked_reason)
 
- async def _finish(self,*,failed:bool=False,cancelled:bool=False)->bool:
+ async def _finish(self,*,failed:bool=False,cancelled:bool=False,blocked_reason:str|None=None)->bool:
   if not self.message_id or not self.items: return False
   current=self._load().get(self.session_key)
   if isinstance(current,dict) and str(current.get("action_id") or "")==self.action_id:
@@ -181,9 +189,14 @@ class StationActionMessage:
   if cancelled: status="CANCELLED"
   elif failed: status="FAILED"
   elif metrics["status"]=="COMPLETE": status="COMPLETE"
-  else: status="BLOCKED"
+  else: status="WAITING"
   self.status=status
-  content=render_action_message(self.label,self.objective,self.items,status=status)
+  if status=="WAITING":
+   reason=_compact(blocked_reason or self.blocked_reason,180)
+   if not reason:
+    reason="background work still running; Station keeps this card live"
+   self.blocked_reason=reason
+  content=render_action_message(self.label,self.objective,self.items,status=status,blocked_reason=self.blocked_reason)
   result=await self.adapter.edit_message(chat_id=self.chat_id,message_id=self.message_id,content=content,metadata=self._metadata())
   if getattr(result,"success",False): self.revision+=1; self._persist(); return True
   return False

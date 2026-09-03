@@ -168,8 +168,27 @@ class RecoveryConfirmView(discord.ui.View if discord else object):
                 context=await asyncio.to_thread(self.parent.controller.safe_mission_context,self.finding_id)
                 channel=interaction.channel
                 if isinstance(channel,discord.Thread): thread=channel
-                else: thread=await channel.create_thread(name=f"recovery-{result['mission_id']}"[:90],auto_archive_duration=1440)
-                for start in range(0,len(context),1900): await thread.send(context[start:start+1900])
+                else:
+                    # AGK_THREAD_CREATE_AUTO_WAKE_V1: never leave recovery threads empty;
+                    # starter must be non-empty. Cross-face wake (Private/@Operator) is preferred
+                    # when the creating face is not Operator; never rely on self-@mention alone.
+                    thread=await channel.create_thread(name=f"recovery-{result['mission_id']}"[:90],auto_archive_duration=1440)
+                starter=(context or "Recovery relaunch authorized. Mission context follows.").strip()
+                if not starter:
+                    raise RuntimeError("AGK_THREAD_CREATE_AUTO_WAKE_V1 FAILED wake: empty recovery context")
+                for start in range(0,len(starter),1900): await thread.send(starter[start:start+1900])
+                # Best-effort cross-face Operator mention when creator is not Operator.
+                try:
+                    operator_id="1541816910587625492"
+                    me=getattr(getattr(self.parent,"adapter",None),"user",None)
+                    my_id=str(getattr(me,"id","")) or ""
+                    if my_id and my_id!=operator_id:
+                        await thread.send(f"<@{operator_id}> Recovery relaunch `{result['mission_id']}` — execute in this thread.",allowed_mentions=discord.AllowedMentions(users=True))
+                except Exception:
+                    pass
+                msg_count=getattr(thread,"message_count",None)
+                if msg_count is not None and int(msg_count)<1:
+                    raise RuntimeError("AGK_THREAD_CREATE_AUTO_WAKE_V1 FAILED wake: recovery thread message_count==0")
                 thread_url=f" https://discord.com/channels/{interaction.guild_id}/{thread.id}"
             except Exception:
                 thread_url=" Mission context remains available inside the owning profile."

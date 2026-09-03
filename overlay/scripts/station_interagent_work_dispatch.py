@@ -170,13 +170,70 @@ class DiscordClient:
             raise DispatchError("Discord work-thread response is invalid")
         return value
 
-    def create_thread(self, parent_channel_id: str, name: str) -> str:
+    def create_thread(self, parent_channel_id: str, name: str, starter_content: str | None = None) -> str:
+        # AGK_THREAD_CREATE_AUTO_WAKE_V1: never return an empty thread.
+        body = str(starter_content or "").strip() or (
+            "Station inter-agent work thread opened. Starter fill in progress."
+        )
         value = self._request(
             "POST",
             f"/channels/{int(parent_channel_id)}/threads",
             {"name": name, "type": 11, "auto_archive_duration": 60},
         )
-        return str(value["id"])
+        thread_id = str(value["id"])
+        self._fill_and_verify_thread(thread_id, body)
+        return thread_id
+
+    def get_channel(self, channel_id: str) -> dict:
+        request = urllib.request.Request(
+            self.api_base + f"/channels/{int(channel_id)}",
+            headers={
+                "Authorization": f"Bot {self.token}",
+                "User-Agent": "AGK-Station-Interagent/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                value = json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as exc:
+            raise DispatchError(f"Discord channel readback failed: HTTP {exc.code}") from None
+        except (OSError, ValueError) as exc:
+            raise DispatchError(f"Discord channel readback failed: {type(exc).__name__}") from None
+        if not isinstance(value, dict) or not value.get("id"):
+            raise DispatchError("Discord channel readback is invalid")
+        return value
+
+    def _fill_and_verify_thread(self, thread_id: str, content: str, *, attempts: int = 3) -> str:
+        last_error = "unknown"
+        message_id = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                message_id = str(
+                    self._request(
+                        "POST",
+                        f"/channels/{int(thread_id)}/messages",
+                        {"content": content[:1900], "allowed_mentions": {"parse": []}},
+                    ).get("id")
+                    or ""
+                )
+            except DispatchError as exc:
+                last_error = str(exc)
+                time.sleep(min(2 * attempt, 5))
+                continue
+            try:
+                meta = self.get_channel(thread_id)
+                count = int(meta.get("message_count") or meta.get("total_message_sent") or 0)
+            except DispatchError as exc:
+                last_error = str(exc)
+                time.sleep(min(2 * attempt, 5))
+                continue
+            if message_id and count >= 1:
+                return message_id
+            last_error = f"message_count={count} after starter post"
+            time.sleep(min(2 * attempt, 5))
+        raise DispatchError(
+            f"AGK_THREAD_CREATE_AUTO_WAKE_V1 FAILED wake: empty or unverified thread {thread_id}: {last_error}"
+        )
 
     def reuse_thread(self, thread_id: str) -> str:
         value=self._request("PATCH",f"/channels/{int(thread_id)}",{"archived":False,"locked":False,"auto_archive_duration":60})
