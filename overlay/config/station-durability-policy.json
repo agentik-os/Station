@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "no_delete": true,
+    "metadata_only": true,
+    "durable_signals": ["memories", "sessions", "cron", "skills"],
+    "classifications": {
+      "builder-os": "durable",
+      "evaluation-os": "durable",
+      "librarian-os": "durable_review",
+      "research-os": "ownership_review",
+      "strategy-os": "ownership_review",
+      "connector-os": "worker_review",
+      "icebreaker-os": "worker_review",
+      "relationship-os": "ownership_review",
+      "nutrition": "deprecated_review",
+      "nutrition-os": "ownership_review"
+    },
+    "admission_requires": [
+      "long_lived_identity",
+      "separate_configuration_or_credentials",
+      "separate_memory_or_sessions",
+      "separate_schedules_or_lifecycle",
+      "canonical_owner"
+    ]
+  },
+  "memory": {
+    "automatic_rewrite": false,
+    "allowed_targets": ["keep_user", "keep_memory", "project_context", "skill_candidate", "remove_candidate"],
+    "reports_must_not_include_entry_text": true
+  },
+  "cron": {
+    "retirement_requires_human": true,
+    "retirement_candidate_after_days": 30,
+    "never_store_prompts_in_registry": true,
+    "required_metadata": ["owner", "purpose", "schedule", "toolsets", "delivery", "last_verified_run", "rollback", "expiry"]
+  },
+  "execution": {
+    "operator_privileged_mechanics": "local",
+    "routine_work_preference": ["container", "ssh", "worktree"],
+    "production_lazy_installs": false,
+    "pilot": {
+      "image": "python:3.11-slim",
+      "network": "none",
+      "read_only_root": true,
+      "cap_drop": "ALL",
+      "no_new_privileges": true,
+      "transport": "stdin_stdout",
+      "host_mounts": false,
+      "output_write": "controller_atomic_0600"
+    }
+  },
+  "fresh_session": {
+    "required_before_automation": true,
+    "required_receipt_fields": ["project_context", "skills_loaded", "toolsets", "artifact", "checks", "rollback", "delivery"]
+  },
+  "checkpoints": {
+    "global_default": false,
+    "development_opt_in": true,
+    "require_git_worktree": true,
+    "retention_days": 3,
+    "max_size_mb": 200
+  }
+}

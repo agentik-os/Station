@@ -3,6 +3,7 @@ name: Completion Oracle
 version: 0.1.0
 runtime: hermes
 scope: [operator]
+owner_environment: operator
 description: Independent completeness verifier that compares original prompts, requirements, artifacts, evidence and mission state; it never implements work.
 prompt: prompt.md
 workflow: workflow.yaml

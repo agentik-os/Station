@@ -51,7 +51,7 @@ class CompletionStore:
         value = str(root.resolve())
         for profile, marker in (
             ("collective", "/home/agentik/.hermes/profiles/collective/"),
-            ("nutrition-os", "/home/operator/.hermes/profiles/nutrition-os/"),
+            ("nutrition-os", "/home/private/.hermes/profiles/nutrition-os/"),
             ("operator", "/home/operator/.hermes/"),
             ("agentik", "/home/agentik/.hermes/"),
             ("mission", "/home/mission/.hermes/"),

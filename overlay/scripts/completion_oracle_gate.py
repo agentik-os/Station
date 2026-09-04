@@ -11,7 +11,7 @@ PROFILES={
  "operator":("operator","/home/operator/.hermes"),"agentik":("agentik","/home/agentik/.hermes"),
  "mission":("mission","/home/mission/.hermes"),"private":("private","/home/private/.hermes"),
  "collective":("agentik","/home/agentik/.hermes/profiles/collective"),
- "nutrition-os":("operator","/home/operator/.hermes/profiles/nutrition-os"),
+ "nutrition-os":("private","/home/private/.hermes/profiles/nutrition-os"),
 }
 _ID=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 

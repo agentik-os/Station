@@ -12,7 +12,8 @@ from pathlib import Path
 
 OS_REF = "nutrition-os@1.0.1"
 PACKAGE = Path("/opt/agentik/os-registry/packages/nutrition-os/1.0.1")
-OPERATOR_ASSIGNMENTS = Path("/etc/agentik/operator-os/assignments.yaml")
+PROFILE_HOME = Path("/home/private/.hermes/profiles/nutrition-os")
+PRIVATE_ASSIGNMENTS = Path("/home/private/.agentik/os-assignments.yaml")
 
 
 def _core():
@@ -28,17 +29,17 @@ def _core():
 
 
 def _paths() -> tuple[Path, Path]:
-    root = Path("/home/operator/.hermes/profiles/nutrition/data/nutrition-os")
+    root = PROFILE_HOME / "data/nutrition-os"
     return root / "state.json", root / ".lock"
 
 
 def _active() -> bool:
     import yaml
-    hermes_home = Path(os.environ.get("HERMES_HOME", "")).resolve() if os.environ.get("HERMES_HOME") else None
-    dedicated_profile = Path("/home/operator/.hermes/profiles/nutrition").resolve()
-    path = OPERATOR_ASSIGNMENTS if (Path.home() == Path("/home/operator") or hermes_home == dedicated_profile) else Path.home() / ".agentik/os-assignments.yaml"
+    hermes_home = os.environ.get("HERMES_HOME")
+    if not hermes_home or Path(hermes_home).resolve() != PROFILE_HOME:
+        return False
     try:
-        records = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("assignments", [])
+        records = (yaml.safe_load(PRIVATE_ASSIGNMENTS.read_text(encoding="utf-8")) or {}).get("assignments", [])
     except OSError:
         return False
     return any(isinstance(r, dict) and r.get("os") == OS_REF for r in records)

@@ -11,7 +11,7 @@ PROFILES = {
     "mission": ("mission", "/home/mission/.hermes"),
     "private": ("private", "/home/private/.hermes"),
     "collective": ("agentik", "/home/agentik/.hermes/profiles/collective"),
-    "nutrition-os": ("operator", "/home/operator/.hermes/profiles/nutrition-os"),
+    "nutrition-os": ("private", "/home/private/.hermes/profiles/nutrition-os"),
 }
 DECISIONS = {"RELAUNCH", "BACKLOG", "IGNORE", "ALREADY_DONE"}
 
